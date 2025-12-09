@@ -97,6 +97,7 @@ export function createQueue(name: string) {
   }
 
   // Use real BullMQ queue
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { Queue } = require('bullmq');
   const connection = {
     host: process.env.REDIS_URL?.split('://')[1].split(':')[0] || 'localhost',

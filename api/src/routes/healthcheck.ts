@@ -45,7 +45,7 @@ router.get('/health/detailed', async (req: Request, res: Response) => {
   } catch (error) {
     checks.database = {
       status: 'unhealthy',
-      error: error.message,
+      error: error instanceof Error ? error.message : 'Unknown error',
     };
     overallStatus = 'degraded';
   }
@@ -61,7 +61,7 @@ router.get('/health/detailed', async (req: Request, res: Response) => {
   } catch (error) {
     checks.redis = {
       status: 'unhealthy',
-      error: error.message,
+      error: error instanceof Error ? error.message : 'Unknown error',
       note: 'Set USE_MOCK_QUEUE=true in .env to use in-memory queue',
     };
     // Don't mark as degraded if using mock queue
@@ -82,7 +82,7 @@ router.get('/health/detailed', async (req: Request, res: Response) => {
   } catch (error) {
     checks.blockchain = {
       status: 'unhealthy',
-      error: error.message,
+      error: error instanceof Error ? error.message : 'Unknown error',
     };
     overallStatus = 'degraded';
   }

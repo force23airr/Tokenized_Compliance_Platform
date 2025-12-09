@@ -79,7 +79,7 @@ export const settlementWorker = new Worker(
         where: { id: transferId },
         data: {
           status: 'failed',
-          failureReason: `Settlement error: ${error.message}`,
+          failureReason: `Settlement error: ${error instanceof Error ? error.message : 'Unknown error'}`,
         },
       });
 

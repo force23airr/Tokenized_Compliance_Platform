@@ -8,6 +8,7 @@ let connection: any;
 
 if (!USE_MOCK) {
   // Use real BullMQ
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
   const bullmq = require('bullmq');
   Queue = bullmq.Queue;
   connection = {

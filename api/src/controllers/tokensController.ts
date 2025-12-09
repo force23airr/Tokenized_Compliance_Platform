@@ -78,8 +78,8 @@ export const createToken = async (
         decimals: validatedData.token_config.decimals,
         blockchain: validatedData.token_config.blockchain.toLowerCase(),
         status: 'pending',
-        assetDetails: validatedData.asset_details,
-        complianceRules: validatedData.compliance_rules || {},
+        assetDetails: validatedData.asset_details as any,
+        complianceRules: (validatedData.compliance_rules || {}) as any,
         custodian: validatedData.custody?.custodian,
         custodianVaultId: validatedData.custody?.vault_id,
         issuerId: req.apiKey?.userId || null, // Null if no user associated with API key

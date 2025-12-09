@@ -1,0 +1,268 @@
+// Prisma schema for RWA Tokenization Platform
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============= API Keys & Authentication =============
+
+model ApiKey {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  name        String
+  userId      String?
+  permissions Json     // ["tokens:create", "investors:verify", etc.]
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  lastUsedAt  DateTime?
+
+  user        User?    @relation(fields: [userId], references: [id])
+
+  @@index([key])
+}
+
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  passwordHash  String
+  name          String
+  organization  String?
+  role          String   @default("user") // user, admin, compliance_officer
+  createdAt     DateTime @default(now())
+
+  apiKeys       ApiKey[]
+  tokens        Token[]
+}
+
+// ============= Tokens (Assets) =============
+
+model Token {
+  id                String   @id @default(uuid())
+
+  // Token Metadata
+  name              String
+  symbol            String
+  assetType         String   // TREASURY, PRIVATE_CREDIT, REAL_ESTATE
+  totalSupply       String   // BigNumber as string
+  decimals          Int      @default(18)
+
+  // Blockchain Info
+  blockchain        String   // ethereum, polygon, base
+  contractAddress   String?  @unique
+  deploymentTxHash  String?
+  deployedAt        DateTime?
+
+  // Status
+  status            String   @default("pending") // pending, deploying, deployed, failed
+
+  // Asset Details (JSON for flexibility)
+  assetDetails      Json     // CUSIP, maturity, underlying value, etc.
+
+  // Compliance Config
+  complianceRules   Json     // accredited_only, jurisdictions, lockup, etc.
+
+  // Custody
+  custodian         String?  // FIREBLOCKS, ANCHORAGE
+  custodianVaultId  String?
+
+  // Ownership
+  issuerId          String
+  issuer            User     @relation(fields: [issuerId], references: [id])
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relations
+  investors         InvestorWhitelist[]
+  transfers         Transfer[]
+  distributions     Distribution[]
+
+  @@index([contractAddress])
+  @@index([issuerId])
+  @@index([assetType])
+}
+
+// ============= Investors =============
+
+model Investor {
+  id                String   @id @default(uuid())
+
+  // Type
+  investorType      String   // individual, entity, trust, fund
+
+  // Personal/Entity Info (encrypted)
+  fullName          String
+  email             String   @unique
+  dateOfBirth       DateTime?
+  taxId             String?  // SSN last 4 or EIN
+
+  // Address
+  address           Json     // street, city, state, zip, country
+
+  // Classification
+  jurisdiction      String   // US, UK, SG, etc.
+  classification    String   // accredited, qualified_purchaser, professional, retail
+
+  // KYC/AML Status
+  kycStatus         String   @default("pending") // pending, approved, rejected, expired
+  kycProvider       String?  // onfido, jumio, chainalysis
+  kycVerifiedAt     DateTime?
+  amlStatus         String   @default("pending")
+  amlLastChecked    DateTime?
+
+  // Documents
+  documents         Json     // Array of document URLs/hashes
+
+  // Wallet
+  walletAddress     String   @unique
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relations
+  whitelistEntries  InvestorWhitelist[]
+  transfers         Transfer[]
+
+  @@index([walletAddress])
+  @@index([email])
+  @@index([kycStatus])
+}
+
+// ============= Whitelist (Token-Investor mapping) =============
+
+model InvestorWhitelist {
+  id              String   @id @default(uuid())
+
+  tokenId         String
+  token           Token    @relation(fields: [tokenId], references: [id])
+
+  investorId      String
+  investor        Investor @relation(fields: [investorId], references: [id])
+
+  // Status
+  whitelisted     Boolean  @default(false)
+  approvedBy      String?  // admin/compliance officer
+  approvedAt      DateTime?
+
+  // Restrictions
+  lockupUntil     DateTime?
+  maxBalance      String?  // BigNumber as string
+
+  // On-chain sync
+  onChainSynced   Boolean  @default(false)
+  syncedAt        DateTime?
+  syncTxHash      String?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([tokenId, investorId])
+  @@index([tokenId])
+  @@index([investorId])
+}
+
+// ============= Transfers =============
+
+model Transfer {
+  id                String   @id @default(uuid())
+
+  tokenId           String
+  token             Token    @relation(fields: [tokenId], references: [id])
+
+  // Parties
+  fromInvestorId    String?
+  fromInvestor      Investor? @relation(fields: [fromInvestorId], references: [id])
+  toAddress         String
+
+  // Amount
+  amount            String   // BigNumber as string
+
+  // Transfer Type
+  transferType      String   // mint, transfer, burn, distribution
+
+  // Status
+  status            String   @default("pending") // pending, compliance_check, approved, executed, failed
+
+  // Compliance
+  complianceChecks  Json     // Array of check results
+  complianceResult  Boolean?
+  failureReason     String?
+
+  // Payment (for DvP)
+  paymentCurrency   String?  // USDC, USDP, USD
+  paymentAmount     String?
+  paymentAddress    String?
+  paymentTxHash     String?
+
+  // Blockchain
+  txHash            String?
+  blockNumber       Int?
+  executedAt        DateTime?
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([tokenId])
+  @@index([status])
+  @@index([txHash])
+}
+
+// ============= Corporate Actions =============
+
+model Distribution {
+  id                String   @id @default(uuid())
+
+  tokenId           String
+  token             Token    @relation(fields: [tokenId], references: [id])
+
+  // Distribution Details
+  distributionType  String   // dividend, interest, redemption
+  amountPerToken    String   // BigNumber as string
+  totalAmount       String
+  currency          String   // USDC, USDP
+
+  // Dates
+  exDate            DateTime
+  recordDate        DateTime
+  paymentDate       DateTime
+
+  // Status
+  status            String   @default("pending") // pending, processing, completed
+
+  // Blockchain
+  txHash            String?
+  executedAt        DateTime?
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([tokenId])
+  @@index([status])
+}
+
+// ============= Audit Log =============
+
+model AuditLog {
+  id          String   @id @default(uuid())
+
+  action      String   // token_created, investor_verified, transfer_executed
+  entityType  String   // token, investor, transfer
+  entityId    String
+
+  userId      String?
+  userEmail   String?
+
+  metadata    Json     // Additional context
+  ipAddress   String?
+
+  createdAt   DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([action])
+  @@index([createdAt])
+}

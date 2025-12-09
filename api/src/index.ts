@@ -6,6 +6,12 @@ import { logger } from './utils/logger';
 import { errorHandler } from './middleware/errorHandler';
 import { requestLogger } from './middleware/requestLogger';
 import apiRoutes from './routes';
+import healthcheckRoutes from './routes/healthcheck';
+
+// Import workers to start background job processing
+import './jobs/workers/tokenDeploymentWorker';
+import './jobs/workers/complianceWorker';
+import './jobs/workers/settlementWorker';
 
 const app = express();
 
@@ -16,16 +22,10 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(requestLogger);
 
-// Health check
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'healthy',
-    version: config.api.version,
-    timestamp: new Date().toISOString()
-  });
-});
+// Healthcheck routes (no authentication required)
+app.use('/', healthcheckRoutes);
 
-// API Routes
+// API Routes (authentication required)
 app.use(`/${config.api.version}`, apiRoutes);
 
 // 404 handler

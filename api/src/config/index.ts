@@ -56,6 +56,14 @@ export const config = {
     },
     aiCompliance: {
       apiUrl: process.env.AI_COMPLIANCE_API_URL || 'http://localhost:8000',
+      timeout: parseInt(process.env.AI_COMPLIANCE_TIMEOUT || '20000', 10),
+      confidenceThreshold: parseFloat(process.env.AI_CONFIDENCE_THRESHOLD || '0.7'),
     },
+  },
+
+  cache: {
+    enabled: process.env.CACHE_ENABLED !== 'false',
+    rulesTtl: parseInt(process.env.CACHE_RULES_TTL || '3600', 10),
+    conflictsTtl: parseInt(process.env.CACHE_CONFLICTS_TTL || '86400', 10),
   },
 };

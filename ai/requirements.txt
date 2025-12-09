@@ -11,6 +11,10 @@ peft>=0.7.0  # LoRA fine-tuning
 fastapi>=0.104.0
 uvicorn>=0.24.0
 pydantic>=2.5.0
+httpx>=0.25.0  # Async HTTP client for Together.ai
+
+# Together.ai Integration
+together>=0.2.0  # Together.ai official SDK (optional, using httpx directly)
 
 # Training utilities
 tensorboard>=2.15.0
@@ -32,3 +36,7 @@ nltk>=3.8.0
 # Configuration
 pyyaml>=6.0.0
 python-dotenv>=1.0.0
+
+# Web Scraping (regulatory feeds)
+beautifulsoup4>=4.12.0
+lxml>=5.0.0

@@ -1,6 +1,7 @@
 import { Worker, Job } from 'bullmq';
 import { deployTokenContract } from '../../services/blockchain';
 import { logger } from '../../utils/logger';
+import { runPreflightComplianceCheck } from '../../services/preflightCheck';
 
 const connection = {
   host: process.env.REDIS_URL?.split('://')[1].split(':')[0] || 'localhost',
@@ -10,7 +11,8 @@ const connection = {
 /**
  * Token Deployment Worker
  *
- * Processes token deployment jobs in the background
+ * Processes token deployment jobs in the background.
+ * Includes preflight compliance checks before blockchain deployment.
  */
 export const tokenDeploymentWorker = new Worker(
   'token-deployment',
@@ -24,14 +26,45 @@ export const tokenDeploymentWorker = new Worker(
     });
 
     try {
+      // ===== PREFLIGHT COMPLIANCE CHECK =====
+      // Run comprehensive compliance checks before deployment
+      logger.info('Running preflight compliance check', { tokenId });
+
+      const preflightResult = await runPreflightComplianceCheck(tokenId);
+
+      logger.info('Preflight check completed', {
+        tokenId,
+        passed: preflightResult.passed,
+        checkCount: preflightResult.checks.length,
+        failedChecks: preflightResult.checks
+          .filter((c) => c.status === 'failed')
+          .map((c) => c.name),
+      });
+
+      if (!preflightResult.passed) {
+        throw new Error(`Preflight failed: ${preflightResult.reason}`);
+      }
+
+      // ===== BLOCKCHAIN DEPLOYMENT =====
       await deployTokenContract(tokenId);
 
       logger.info('Token deployment completed successfully', {
         jobId: job.id,
         tokenId,
+        preflightChecks: preflightResult.checks.map((c) => ({
+          name: c.name,
+          status: c.status,
+        })),
       });
 
-      return { success: true, tokenId };
+      return {
+        success: true,
+        tokenId,
+        preflight: {
+          passed: preflightResult.passed,
+          checks: preflightResult.checks,
+        },
+      };
     } catch (error) {
       logger.error('Token deployment failed', {
         jobId: job.id,

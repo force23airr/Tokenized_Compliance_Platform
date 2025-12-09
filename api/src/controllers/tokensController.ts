@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { ApiError } from '../middleware/errorHandler';
 import { deployTokenContract } from '../services/blockchain';
 import { logger } from '../utils/logger';
+import { validateTokenCompliance } from '../services/aiComplianceEnhanced';
+import { storeConflictEvent } from '../services/preflightCheck';
 
 const prisma = new PrismaClient();
 
@@ -68,6 +70,47 @@ export const createToken = async (
       userId: req.apiKey?.userId,
     });
 
+    // ===== AI COMPLIANCE PRE-VALIDATION =====
+    // This runs BEFORE database save to catch compliance issues early
+    const complianceRules = validatedData.compliance_rules || {
+      accredited_only: true,
+      max_investors: 2000,
+      lockup_period_days: 0,
+      allowed_jurisdictions: ['US'],
+    };
+    const jurisdictions = complianceRules.allowed_jurisdictions || ['US'];
+
+    const aiComplianceResult = await validateTokenCompliance({
+      assetType: validatedData.asset_type,
+      jurisdictions,
+      complianceRules: {
+        accreditedOnly: complianceRules.accredited_only,
+        maxInvestors: complianceRules.max_investors,
+        lockupPeriodDays: complianceRules.lockup_period_days,
+        allowedJurisdictions: complianceRules.allowed_jurisdictions,
+      },
+    });
+
+    logger.info('AI compliance validation result', {
+      approved: aiComplianceResult.approved,
+      confidence: aiComplianceResult.confidence,
+      hasConflicts: aiComplianceResult.conflicts.length > 0,
+      isFallback: aiComplianceResult.isFallback,
+    });
+
+    // Reject if AI compliance check fails and requires manual review
+    if (!aiComplianceResult.approved && !aiComplianceResult.requiresManualReview) {
+      throw new ApiError(
+        400,
+        'COMPLIANCE_VIOLATION',
+        aiComplianceResult.reason || 'Token configuration violates regulatory requirements',
+        {
+          conflicts: aiComplianceResult.conflicts,
+          suggestedRequirements: aiComplianceResult.combinedRequirements,
+        }
+      );
+    }
+
     // Create token record in database
     const token = await prisma.token.create({
       data: {
@@ -91,6 +134,25 @@ export const createToken = async (
       logger.error('Token deployment failed', { tokenId: token.id, error });
     });
 
+    // Store conflict events for audit trail
+    if (aiComplianceResult.conflicts.length > 0) {
+      for (const conflict of aiComplianceResult.conflicts) {
+        const resolution = aiComplianceResult.resolutions.find(
+          (r) => r.conflictType === conflict.type
+        );
+        await storeConflictEvent(
+          token.id,
+          conflict.type,
+          conflict.jurisdictions[0] || 'unknown',
+          conflict.jurisdictions[1] || 'unknown',
+          conflict.ruleA,
+          conflict.ruleB,
+          resolution?.resolvedRequirement || 'unresolved',
+          aiComplianceResult.rulesetVersion
+        );
+      }
+    }
+
     // Log audit trail
     await prisma.auditLog.create({
       data: {
@@ -101,6 +163,13 @@ export const createToken = async (
         metadata: {
           assetType: token.assetType,
           blockchain: token.blockchain,
+          aiCompliance: {
+            approved: aiComplianceResult.approved,
+            confidence: aiComplianceResult.confidence,
+            requiresManualReview: aiComplianceResult.requiresManualReview,
+            conflictCount: aiComplianceResult.conflicts.length,
+            rulesetVersion: aiComplianceResult.rulesetVersion,
+          },
         },
       },
     });
@@ -112,6 +181,15 @@ export const createToken = async (
       blockchain: token.blockchain,
       created_at: token.createdAt,
       estimated_deployment_time: 300, // 5 minutes
+      compliance: {
+        approved: aiComplianceResult.approved,
+        confidence: aiComplianceResult.confidence,
+        requires_manual_review: aiComplianceResult.requiresManualReview,
+        conflict_count: aiComplianceResult.conflicts.length,
+        combined_requirements: aiComplianceResult.combinedRequirements,
+        ruleset_version: aiComplianceResult.rulesetVersion,
+        is_fallback: aiComplianceResult.isFallback,
+      },
     });
   } catch (error) {
     if (error instanceof z.ZodError) {

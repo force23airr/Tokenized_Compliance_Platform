@@ -42,3 +42,5 @@ Private Credit & Real Estate Firms looking to unlock liquidity and fractionalize
 Family Offices & Institutional Investors wanting transparent, regulated access to RWAs.
 
 
+DO NOT ENTER ANY SENSITIVE KEYS, FOR EXAMPLE API KEYS, DB KEYS, USER INFO, PASSWORDS, PAYMENT METHODS, THIS REPO IS PUBLIC ON GITHUB
+

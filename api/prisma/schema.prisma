@@ -81,6 +81,7 @@ model Token {
   investors         InvestorWhitelist[]
   transfers         Transfer[]
   distributions     Distribution[]
+  conflictEvents    ConflictEvent[]
 
   @@index([contractAddress])
   @@index([issuerId])
@@ -265,4 +266,29 @@ model AuditLog {
   @@index([entityType, entityId])
   @@index([action])
   @@index([createdAt])
+}
+
+// ============= Conflict Events (AI Compliance) =============
+
+model ConflictEvent {
+  id              String   @id @default(uuid())
+
+  tokenId         String
+  token           Token    @relation(fields: [tokenId], references: [id])
+
+  conflictType    String   // jurisdiction_conflict, investor_limit_conflict, etc.
+  jurisdictionA   String   // First jurisdiction in conflict
+  jurisdictionB   String   // Second jurisdiction in conflict
+
+  ruleA           String   // Rule from jurisdiction A
+  ruleB           String   // Rule from jurisdiction B
+
+  resolution      String   // How the conflict was resolved
+  rulesetVersion  String   // Version of regulatory rules used
+
+  resolvedAt      DateTime @default(now())
+
+  @@index([tokenId])
+  @@index([conflictType])
+  @@index([resolvedAt])
 }

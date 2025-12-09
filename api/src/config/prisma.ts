@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { logger } from '../utils/logger';
+import { MetricsStore } from '../middleware/metrics';
 
 /**
  * Centralized Prisma Client
@@ -9,14 +10,39 @@ import { logger } from '../utils/logger';
  * - Proper connection pooling
  * - Graceful shutdown handling
  * - Query logging in development
+ * - Performance monitoring with middleware
  */
 
 const prismaClientSingleton = () => {
-  return new PrismaClient({
+  const prisma = new PrismaClient({
     log: process.env.NODE_ENV === 'development'
       ? ['query', 'info', 'warn', 'error']
       : ['error'],
   });
+
+  // Add middleware to track query performance
+  prisma.$use(async (params, next) => {
+    const before = Date.now();
+    const result = await next(params);
+    const after = Date.now();
+    const duration = after - before;
+
+    // Record metrics
+    MetricsStore.getInstance().recordDbQuery(duration);
+
+    // Log slow queries (>100ms)
+    if (duration > 100) {
+      logger.warn('Slow database query detected', {
+        model: params.model,
+        action: params.action,
+        duration: `${duration}ms`,
+      });
+    }
+
+    return result;
+  });
+
+  return prisma;
 };
 
 declare global {

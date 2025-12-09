@@ -2,6 +2,7 @@ import { ethers } from 'ethers';
 import { PrismaClient } from '@prisma/client';
 import { config } from '../config';
 import { logger } from '../utils/logger';
+import { recordBlockchainMetrics } from '../middleware/metrics';
 
 const prisma = new PrismaClient();
 
@@ -68,6 +69,9 @@ export async function deployTokenContract(tokenId: string): Promise<void> {
 
     const contractAddress = await contract.getAddress();
     const deploymentTx = contract.deploymentTransaction();
+
+    // Record blockchain metrics
+    recordBlockchainMetrics('token_deployment', undefined, deploymentTx?.hash);
 
     logger.info('Token deployed successfully', {
       tokenId,

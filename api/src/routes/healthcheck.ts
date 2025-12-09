@@ -5,6 +5,7 @@ import { logger } from '../utils/logger';
 import { ethers } from 'ethers';
 import { config } from '../config';
 import axios from 'axios';
+import { MetricsStore } from '../middleware/metrics';
 
 const router = Router();
 
@@ -150,7 +151,7 @@ router.get('/health/live', (req: Request, res: Response) => {
 });
 
 /**
- * Metrics endpoint - for Prometheus/monitoring
+ * Metrics endpoint - JSON format with business metrics
  */
 router.get('/metrics', async (req: Request, res: Response) => {
   try {
@@ -168,6 +169,8 @@ router.get('/metrics', async (req: Request, res: Response) => {
       getQueueStats(),
     ]);
 
+    const performanceMetrics = MetricsStore.getInstance().getStats();
+
     res.json({
       timestamp: new Date().toISOString(),
       database: {
@@ -177,6 +180,7 @@ router.get('/metrics', async (req: Request, res: Response) => {
         pendingTransfers,
       },
       queues: queueStats,
+      performance: performanceMetrics,
     });
   } catch (error) {
     logger.error('Metrics fetch failed', { error });
@@ -184,6 +188,20 @@ router.get('/metrics', async (req: Request, res: Response) => {
     res.status(500).json({
       error: 'Failed to fetch metrics',
     });
+  }
+});
+
+/**
+ * Prometheus-formatted metrics endpoint
+ */
+router.get('/metrics/prometheus', (req: Request, res: Response) => {
+  try {
+    const prometheusMetrics = MetricsStore.getInstance().getPrometheusMetrics();
+    res.setHeader('Content-Type', 'text/plain; version=0.0.4');
+    res.send(prometheusMetrics);
+  } catch (error) {
+    logger.error('Prometheus metrics failed', { error });
+    res.status(500).send('# Failed to generate metrics\n');
   }
 });
 

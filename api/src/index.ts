@@ -5,6 +5,7 @@ import { config } from './config';
 import { logger } from './utils/logger';
 import { errorHandler } from './middleware/errorHandler';
 import { requestLogger } from './middleware/requestLogger';
+import { metricsMiddleware } from './middleware/metrics';
 import apiRoutes from './routes';
 import healthcheckRoutes from './routes/healthcheck';
 
@@ -26,6 +27,7 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(requestLogger);
+app.use(metricsMiddleware);
 
 // Healthcheck routes (no authentication required)
 app.use('/', healthcheckRoutes);

@@ -4,6 +4,7 @@ import { apiLimiter } from '../middleware/rateLimit';
 import tokensRouter from './tokens';
 import investorsRouter from './investors';
 import transfersRouter from './transfers';
+import sandboxRouter from './sandbox';
 
 const router = Router();
 
@@ -15,5 +16,6 @@ router.use(authenticate);
 router.use('/tokens', tokensRouter);
 router.use('/investors', investorsRouter);
 router.use('/transfers', transfersRouter);
+router.use('/sandbox', sandboxRouter);
 
 export default router;

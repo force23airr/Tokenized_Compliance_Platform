@@ -11,6 +11,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
+# Load environment variables from .env file
+from dotenv import load_dotenv
+env_path = Path(__file__).parent.parent.parent / ".env"
+load_dotenv(env_path)
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import asyncio

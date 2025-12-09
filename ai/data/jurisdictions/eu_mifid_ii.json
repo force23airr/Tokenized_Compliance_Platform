@@ -1,0 +1,138 @@
+{
+  "jurisdiction": "EU",
+  "regulation": "MiFID II",
+  "regulator": "ESMA",
+  "last_updated": "2025-01-10",
+  "source_urls": [
+    "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32014L0065",
+    "https://www.esma.europa.eu/policy-rules/mifid-ii-and-mifir"
+  ],
+
+  "client_classification": {
+    "retail_client": {
+      "description": "Default classification - highest level of protection",
+      "protections": [
+        "full_disclosure_requirements",
+        "suitability_assessment_required",
+        "best_execution_obligation",
+        "investor_compensation_scheme"
+      ]
+    },
+
+    "professional_client": {
+      "description": "Clients with experience, knowledge and expertise to make own investment decisions",
+      "categories": {
+        "per_se_professional": {
+          "description": "Automatically classified as professional",
+          "entities": [
+            "credit_institutions",
+            "investment_firms",
+            "insurance_companies",
+            "collective_investment_schemes",
+            "pension_funds",
+            "commodity_dealers",
+            "national_governments",
+            "central_banks",
+            "large_undertakings"
+          ],
+          "large_undertaking_thresholds": {
+            "balance_sheet_total_eur": 20000000,
+            "net_turnover_eur": 40000000,
+            "own_funds_eur": 2000000,
+            "criteria_required": 2
+          }
+        },
+        "elective_professional": {
+          "description": "Retail clients who request professional treatment",
+          "quantitative_test": {
+            "transactions_per_quarter": 10,
+            "portfolio_size_eur": 500000,
+            "professional_experience_years": 1,
+            "criteria_required": 2
+          },
+          "qualitative_test": "firm must assess expertise and experience"
+        }
+      }
+    },
+
+    "eligible_counterparty": {
+      "description": "Highest sophistication - minimal protections",
+      "entities": [
+        "investment_firms",
+        "credit_institutions",
+        "insurance_companies",
+        "ucits_and_managers",
+        "pension_funds",
+        "national_governments",
+        "central_banks",
+        "supranational_organisations"
+      ]
+    }
+  },
+
+  "product_governance": {
+    "target_market": {
+      "required_criteria": [
+        "client_type",
+        "knowledge_and_experience",
+        "financial_situation",
+        "risk_tolerance",
+        "objectives_and_needs"
+      ]
+    },
+    "negative_target_market": "must identify clients for whom product is not suitable"
+  },
+
+  "disclosure_requirements": {
+    "kid": {
+      "name": "Key Information Document",
+      "applies_to": "PRIIPs",
+      "max_pages": 3,
+      "required_sections": [
+        "product_description",
+        "risk_indicator",
+        "performance_scenarios",
+        "costs",
+        "holding_period"
+      ]
+    },
+    "costs_and_charges": {
+      "ex_ante_disclosure": "required before transaction",
+      "ex_post_disclosure": "annual statement required",
+      "aggregation": "must show cumulative effect on returns"
+    }
+  },
+
+  "tokenized_securities": {
+    "dlt_pilot_regime": {
+      "regulation": "EU 2022/858",
+      "effective_date": "2023-03-23",
+      "scope": [
+        "dlt_multilateral_trading_facility",
+        "dlt_settlement_system",
+        "dlt_trading_and_settlement_system"
+      ],
+      "thresholds": {
+        "market_cap_per_issuer_eur": 500000000,
+        "total_market_cap_eur": 6000000000
+      },
+      "exemptions_available": [
+        "central_securities_depository_requirements",
+        "settlement_finality_rules",
+        "certain_mifid_requirements"
+      ]
+    }
+  },
+
+  "cross_border": {
+    "passporting": {
+      "description": "Single authorization valid across EU/EEA",
+      "notification_required": true,
+      "host_state_rules": "apply for conduct of business"
+    },
+    "third_country_firms": {
+      "equivalence_required": true,
+      "reverse_solicitation": "allowed but narrowly interpreted"
+    }
+  }
+}

@@ -1,0 +1,63 @@
+# AI Model Training Configuration
+
+base_model:
+  name: "mistralai/Mistral-7B-v0.1"
+  # Alternatives:
+  # - "meta-llama/Llama-3-8B"
+  # - "microsoft/phi-3-mini-4k-instruct"
+  # - "nlpaueb/legal-bert-base-uncased"
+
+training:
+  method: "lora"  # Parameter-efficient fine-tuning
+  lora_config:
+    r: 16
+    lora_alpha: 32
+    lora_dropout: 0.05
+    target_modules: ["q_proj", "v_proj", "k_proj", "o_proj"]
+
+  hyperparameters:
+    learning_rate: 2e-5
+    batch_size: 4
+    gradient_accumulation_steps: 8
+    num_epochs: 3
+    warmup_ratio: 0.1
+    weight_decay: 0.01
+    max_seq_length: 4096
+
+datasets:
+  jurisdiction_classifier:
+    path: "./datasets/jurisdiction/"
+    train_split: 0.8
+    val_split: 0.1
+    test_split: 0.1
+
+  conflict_resolver:
+    path: "./datasets/conflicts/"
+    train_split: 0.8
+    val_split: 0.1
+    test_split: 0.1
+
+  document_generator:
+    path: "./datasets/documents/"
+    train_split: 0.9
+    val_split: 0.1
+
+evaluation:
+  metrics:
+    - accuracy
+    - f1_score
+    - precision
+    - recall
+
+  jurisdiction_classifier:
+    - jurisdiction_accuracy
+    - entity_type_accuracy
+
+  conflict_resolver:
+    - conflict_detection_rate
+    - resolution_validity  # Requires legal review
+
+output:
+  model_dir: "../models/"
+  checkpoint_dir: "./checkpoints/"
+  logs_dir: "./logs/"

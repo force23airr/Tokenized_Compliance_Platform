@@ -1,0 +1,26 @@
+{
+  "ethereum": {
+    "chainId": 1,
+    "rpcUrl": "${ETHEREUM_RPC_URL}",
+    "gasPrice": "auto",
+    "confirmations": 2
+  },
+  "polygon": {
+    "chainId": 137,
+    "rpcUrl": "${POLYGON_RPC_URL}",
+    "gasPrice": "auto",
+    "confirmations": 5
+  },
+  "avalanche": {
+    "chainId": 43114,
+    "rpcUrl": "${AVALANCHE_RPC_URL}",
+    "gasPrice": "auto",
+    "confirmations": 3
+  },
+  "base": {
+    "chainId": 8453,
+    "rpcUrl": "${BASE_RPC_URL}",
+    "gasPrice": "auto",
+    "confirmations": 2
+  }
+}

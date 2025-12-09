@@ -1,0 +1,137 @@
+{
+  "jurisdiction": "SG",
+  "regulator": "MAS",
+  "regulator_full_name": "Monetary Authority of Singapore",
+  "last_updated": "2025-01-12",
+  "source_urls": [
+    "https://www.mas.gov.sg/regulation/capital-markets",
+    "https://sso.agc.gov.sg/Act/SFA2001"
+  ],
+
+  "securities_regulation": {
+    "governing_law": "Securities and Futures Act 2001 (SFA)",
+    "digital_assets_guidance": "MAS Guide to Digital Token Offerings (2020)"
+  },
+
+  "investor_classification": {
+    "accredited_investor": {
+      "definition_section": "SFA Section 4A(1)(a)",
+      "categories": {
+        "individual": {
+          "net_personal_assets_sgd": 2000000,
+          "net_personal_assets_note": "or equivalent in foreign currency, may include up to $1M of net equity in primary residence",
+          "alternative_criteria": {
+            "income_sgd": 300000,
+            "income_period": "preceding 12 months"
+          }
+        },
+        "corporation": {
+          "net_assets_sgd": 10000000,
+          "net_assets_note": "or equivalent, as determined by most recent audited balance sheet"
+        },
+        "trustee": {
+          "trust_assets_sgd": 10000000
+        }
+      },
+      "opt_in_process": {
+        "written_consent_required": true,
+        "risk_warning_required": true,
+        "cooling_off_period": "none specified"
+      }
+    },
+
+    "institutional_investor": {
+      "definition_section": "SFA Section 4A(1)(c)",
+      "entities": [
+        "banks_licensed_under_banking_act",
+        "merchant_banks",
+        "finance_companies",
+        "insurance_companies",
+        "holder_of_capital_markets_services_license",
+        "central_government",
+        "statutory_body",
+        "pension_fund"
+      ]
+    },
+
+    "expert_investor": {
+      "definition_section": "SFA Section 4A(1)(b)",
+      "criteria": {
+        "primary_business": "investments in capital markets products",
+        "or_net_assets_sgd": 10000000
+      }
+    }
+  },
+
+  "exemptions": {
+    "private_placement": {
+      "section": "SFA Section 275",
+      "description": "Offers to accredited/institutional investors",
+      "requirements": {
+        "prospectus_required": false,
+        "max_offerees_in_12_months": 50,
+        "accredited_investor_count": "unlimited",
+        "resale_restrictions": "6 months or to other exempt investors"
+      }
+    },
+
+    "small_offers": {
+      "section": "SFA Section 272A",
+      "max_amount_sgd": 5000000,
+      "max_amount_period": "12 months",
+      "prospectus_required": false
+    }
+  },
+
+  "digital_token_offerings": {
+    "guidance_date": "2020-05",
+    "token_classification": {
+      "security_token": {
+        "description": "Tokens that constitute capital markets products under SFA",
+        "regulated": true,
+        "activities_requiring_license": [
+          "dealing_in_securities",
+          "advising_on_corporate_finance",
+          "fund_management"
+        ]
+      },
+      "payment_token": {
+        "description": "Tokens used as medium of exchange",
+        "regulated_under": "Payment Services Act 2019",
+        "license_required": "Major Payment Institution or Standard Payment Institution"
+      },
+      "utility_token": {
+        "description": "Tokens providing access to goods/services",
+        "generally_regulated": false,
+        "note": "May still be securities depending on structure"
+      }
+    }
+  },
+
+  "aml_cft": {
+    "governing_regulation": "MAS Notice SFA04-N02",
+    "cdd_requirements": {
+      "identification": "mandatory for all customers",
+      "verification": "mandatory using reliable sources",
+      "beneficial_ownership": "must identify and verify",
+      "ongoing_monitoring": "required"
+    },
+    "high_risk_indicators": [
+      "pep_status",
+      "high_risk_jurisdiction",
+      "complex_ownership_structure",
+      "unusual_transaction_patterns"
+    ]
+  },
+
+  "reporting_requirements": {
+    "suspicious_transaction_reports": {
+      "submit_to": "Suspicious Transaction Reporting Office (STRO)",
+      "deadline": "as soon as reasonably practicable"
+    },
+    "regulatory_filings": {
+      "form_1": "notification of exempt offering",
+      "deadline_days": 14
+    }
+  }
+}

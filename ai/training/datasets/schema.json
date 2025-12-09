@@ -1,0 +1,100 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Compliance Training Data Schema",
+
+  "definitions": {
+    "jurisdiction_sample": {
+      "type": "object",
+      "required": ["input", "output"],
+      "properties": {
+        "input": {
+          "type": "object",
+          "properties": {
+            "document_text": { "type": "string" },
+            "document_type": {
+              "type": "string",
+              "enum": ["passport", "incorporation_doc", "tax_form", "accreditation_letter", "subscription_agreement"]
+            }
+          }
+        },
+        "output": {
+          "type": "object",
+          "properties": {
+            "jurisdiction": { "type": "string", "description": "ISO 3166-1 alpha-2 country code" },
+            "entity_type": {
+              "type": "string",
+              "enum": ["individual", "corporation", "llc", "partnership", "trust", "fund", "sovereign"]
+            },
+            "investor_classification": {
+              "type": "string",
+              "enum": ["retail", "accredited", "qualified_purchaser", "institutional", "professional"]
+            },
+            "applicable_regulations": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+
+    "conflict_sample": {
+      "type": "object",
+      "required": ["jurisdictions", "rule_type", "conflict", "resolution"],
+      "properties": {
+        "jurisdictions": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 2
+        },
+        "rule_type": {
+          "type": "string",
+          "enum": ["accreditation", "lockup_period", "investor_cap", "disclosure", "reporting", "transfer_restriction"]
+        },
+        "conflict": {
+          "type": "object",
+          "properties": {
+            "description": { "type": "string" },
+            "rule_a": { "type": "string" },
+            "rule_b": { "type": "string" }
+          }
+        },
+        "resolution": {
+          "type": "object",
+          "properties": {
+            "strategy": {
+              "type": "string",
+              "enum": ["apply_strictest", "jurisdiction_specific", "investor_election", "legal_opinion_required"]
+            },
+            "resolved_rule": { "type": "string" },
+            "rationale": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "document_sample": {
+      "type": "object",
+      "required": ["context", "generated_document"],
+      "properties": {
+        "context": {
+          "type": "object",
+          "properties": {
+            "asset_type": { "type": "string" },
+            "issuer_jurisdiction": { "type": "string" },
+            "investor_jurisdictions": { "type": "array", "items": { "type": "string" } },
+            "offering_type": { "type": "string" },
+            "document_type": {
+              "type": "string",
+              "enum": ["subscription_agreement", "ppm", "disclosure", "side_letter", "kyc_form"]
+            }
+          }
+        },
+        "generated_document": {
+          "type": "string",
+          "description": "The compliant document text"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,132 @@
+{
+  "jurisdiction": "US",
+  "regulator": "SEC",
+  "last_updated": "2025-01-15",
+  "source_urls": [
+    "https://www.ecfr.gov/current/title-17/chapter-II/part-230",
+    "https://www.sec.gov/rules"
+  ],
+
+  "exemptions": {
+    "reg_d_506b": {
+      "name": "Regulation D Rule 506(b)",
+      "description": "Private placement exemption allowing unlimited capital raise from accredited investors",
+      "requirements": {
+        "max_non_accredited_investors": 35,
+        "general_solicitation_allowed": false,
+        "accredited_investor_verification": "self_certification",
+        "form_d_filing_required": true,
+        "form_d_deadline_days": 15
+      },
+      "investor_caps": {
+        "accredited": "unlimited",
+        "non_accredited": 35
+      },
+      "restrictions": {
+        "lockup_period_days": 0,
+        "resale_restrictions": "Rule 144 applies - 6 month holding for reporting, 12 month for non-reporting"
+      }
+    },
+
+    "reg_d_506c": {
+      "name": "Regulation D Rule 506(c)",
+      "description": "Private placement with general solicitation allowed",
+      "requirements": {
+        "max_non_accredited_investors": 0,
+        "general_solicitation_allowed": true,
+        "accredited_investor_verification": "reasonable_steps_required",
+        "verification_methods": [
+          "income_verification_tax_returns",
+          "net_worth_verification_bank_statements",
+          "third_party_verification_letter",
+          "existing_investor_certification"
+        ],
+        "form_d_filing_required": true
+      }
+    },
+
+    "reg_s": {
+      "name": "Regulation S",
+      "description": "Offshore offerings exemption",
+      "requirements": {
+        "us_persons_allowed": false,
+        "distribution_compliance_period_days": 40,
+        "category_3_period_days": 365
+      }
+    }
+  },
+
+  "accredited_investor_definition": {
+    "rule_reference": "Rule 501(a)",
+    "effective_date": "2020-12-08",
+    "categories": {
+      "natural_person_income": {
+        "description": "Individual income exceeds $200K (or $300K joint) in each of past 2 years with expectation of same",
+        "thresholds": {
+          "individual_income": 200000,
+          "joint_income": 300000,
+          "years_required": 2
+        }
+      },
+      "natural_person_net_worth": {
+        "description": "Net worth exceeds $1M, excluding primary residence",
+        "thresholds": {
+          "net_worth": 1000000,
+          "exclude_primary_residence": true
+        }
+      },
+      "professional_certifications": {
+        "description": "Holds Series 7, 65, or 82 license in good standing",
+        "qualifying_licenses": ["Series 7", "Series 65", "Series 82"]
+      },
+      "entity_assets": {
+        "description": "Entity with assets exceeding $5M, not formed for specific purpose of acquiring securities",
+        "threshold": 5000000
+      },
+      "all_equity_owners_accredited": {
+        "description": "Entity where all equity owners are accredited investors"
+      }
+    }
+  },
+
+  "qualified_purchaser_definition": {
+    "rule_reference": "Investment Company Act Section 2(a)(51)",
+    "categories": {
+      "natural_person": {
+        "investments_threshold": 5000000
+      },
+      "family_company": {
+        "investments_threshold": 5000000
+      },
+      "trust": {
+        "investments_threshold": 5000000,
+        "additional_requirement": "not formed for specific investment"
+      },
+      "entity": {
+        "investments_threshold": 25000000
+      }
+    }
+  },
+
+  "reporting_requirements": {
+    "form_d": {
+      "deadline": "15 days after first sale",
+      "amendments": "required for material changes",
+      "annual_amendment": "not required but recommended"
+    },
+    "blue_sky": {
+      "description": "State-level filings may be required",
+      "note": "506 preempts state registration but not notice filings"
+    }
+  },
+
+  "transfer_restrictions": {
+    "rule_144": {
+      "holding_period_reporting_issuer_days": 180,
+      "holding_period_non_reporting_issuer_days": 365,
+      "volume_limitations": "1% of outstanding or average 4-week trading volume",
+      "manner_of_sale": "ordinary brokerage transactions",
+      "form_144_required_above": 5000
+    }
+  }
+}

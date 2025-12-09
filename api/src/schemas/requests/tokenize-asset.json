@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["asset_type", "asset_details", "token_config"],
+  "properties": {
+    "asset_type": {
+      "type": "string",
+      "enum": ["TREASURY", "PRIVATE_CREDIT", "REAL_ESTATE"]
+    },
+    "asset_details": {
+      "type": "object"
+    },
+    "token_config": {
+      "type": "object",
+      "required": ["name", "symbol", "total_supply", "blockchain"],
+      "properties": {
+        "name": {"type": "string", "minLength": 3, "maxLength": 50},
+        "symbol": {"type": "string", "minLength": 2, "maxLength": 10},
+        "total_supply": {"type": "number", "minimum": 1},
+        "decimals": {"type": "integer", "minimum": 0, "maximum": 18},
+        "blockchain": {
+          "type": "string",
+          "enum": ["ETHEREUM", "POLYGON", "AVALANCHE", "BASE"]
+        }
+      }
+    }
+  }
+}

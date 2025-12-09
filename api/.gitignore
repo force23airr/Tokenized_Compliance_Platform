@@ -1,0 +1,33 @@
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Database
+*.db
+*.db-journal
+prisma/dev.db
+prisma/dev.db-journal
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Testing
+coverage/
+.nyc_output/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

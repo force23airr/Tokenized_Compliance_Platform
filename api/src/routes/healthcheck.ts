@@ -53,15 +53,20 @@ router.get('/health/detailed', async (req: Request, res: Response) => {
   try {
     const queueStats = await getQueueStats();
     checks.redis = {
-      status: 'healthy',
+      status: process.env.USE_MOCK_QUEUE === 'true' ? 'mock' : 'healthy',
+      mode: process.env.USE_MOCK_QUEUE === 'true' ? 'in-memory' : 'redis',
       queues: queueStats,
     };
   } catch (error) {
     checks.redis = {
       status: 'unhealthy',
       error: error.message,
+      note: 'Set USE_MOCK_QUEUE=true in .env to use in-memory queue',
     };
-    overallStatus = 'degraded';
+    // Don't mark as degraded if using mock queue
+    if (process.env.USE_MOCK_QUEUE !== 'true') {
+      overallStatus = 'degraded';
+    }
   }
 
   // Blockchain RPC check

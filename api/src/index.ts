@@ -8,10 +8,15 @@ import { requestLogger } from './middleware/requestLogger';
 import apiRoutes from './routes';
 import healthcheckRoutes from './routes/healthcheck';
 
-// Import workers to start background job processing
-import './jobs/workers/tokenDeploymentWorker';
-import './jobs/workers/complianceWorker';
-import './jobs/workers/settlementWorker';
+// Only start workers if not using mock queue
+if (process.env.USE_MOCK_QUEUE !== 'true') {
+  logger.info('Starting background workers with Redis...');
+  import('./jobs/workers/tokenDeploymentWorker');
+  import('./jobs/workers/complianceWorker');
+  import('./jobs/workers/settlementWorker');
+} else {
+  logger.info('Using mock queue - background jobs will run in-memory');
+}
 
 const app = express();
 

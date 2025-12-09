@@ -71,8 +71,8 @@ model Token {
   custodianVaultId  String?
 
   // Ownership
-  issuerId          String
-  issuer            User     @relation(fields: [issuerId], references: [id])
+  issuerId          String?
+  issuer            User?     @relation(fields: [issuerId], references: [id])
 
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt

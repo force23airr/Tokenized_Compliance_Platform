@@ -1,21 +1,41 @@
-import { Queue, Worker, Job } from 'bullmq';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 
-// Redis connection config
-const connection = {
-  host: config.redis.url.split('://')[1].split(':')[0],
-  port: parseInt(config.redis.url.split(':')[2] || '6379'),
-};
+const USE_MOCK = process.env.USE_MOCK_QUEUE === 'true';
+
+let Queue: any;
+let connection: any;
+
+if (!USE_MOCK) {
+  // Use real BullMQ
+  const bullmq = require('bullmq');
+  Queue = bullmq.Queue;
+  connection = {
+    host: config.redis.url.split('://')[1].split(':')[0],
+    port: parseInt(config.redis.url.split(':')[2] || '6379'),
+  };
+} else {
+  // Use mock queue
+  Queue = class MockQueue {
+    constructor(public name: string) {
+      logger.info(`Using mock queue: ${name}`);
+    }
+    async add() { return { id: 'mock-' + Date.now() }; }
+    async getJobCounts() {
+      return { waiting: 0, active: 0, completed: 0, failed: 0 };
+    }
+    async clean() {}
+  };
+}
 
 /**
  * Job Queues
  */
-export const tokenDeploymentQueue = new Queue('token-deployment', { connection });
-export const complianceCheckQueue = new Queue('compliance-check', { connection });
-export const settlementQueue = new Queue('settlement', { connection });
-export const reportingQueue = new Queue('reporting', { connection });
-export const notificationQueue = new Queue('notification', { connection });
+export const tokenDeploymentQueue = new Queue('token-deployment', connection ? { connection } : {});
+export const complianceCheckQueue = new Queue('compliance-check', connection ? { connection } : {});
+export const settlementQueue = new Queue('settlement', connection ? { connection } : {});
+export const reportingQueue = new Queue('reporting', connection ? { connection } : {});
+export const notificationQueue = new Queue('notification', connection ? { connection } : {});
 
 /**
  * Add job to deployment queue

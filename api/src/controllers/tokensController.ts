@@ -82,7 +82,7 @@ export const createToken = async (
         complianceRules: validatedData.compliance_rules || {},
         custodian: validatedData.custody?.custodian,
         custodianVaultId: validatedData.custody?.vault_id,
-        issuerId: req.apiKey?.userId || 'system', // Default to system if no user
+        issuerId: req.apiKey?.userId || null, // Null if no user associated with API key
       },
     });
 

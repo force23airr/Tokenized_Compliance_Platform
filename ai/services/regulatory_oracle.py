@@ -19,11 +19,14 @@ The Oracle:
 import json
 import logging
 import hashlib
+import os
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from dataclasses import dataclass, asdict
 from enum import Enum
+
+import aiohttp
 
 import sys
 from pathlib import Path
@@ -59,6 +62,18 @@ class ChangeStatus(str, Enum):
     REJECTED = "rejected"
     APPLIED = "applied"
     EXPIRED = "expired"
+
+
+class GrandfatheringStrategy(str, Enum):
+    """
+    Strategy for handling investors affected by regulatory changes.
+    Maps to the TypeScript GrandfatheringStrategy enum.
+    """
+    NONE = "none"                          # No grandfathering, immediate enforcement
+    FULL = "full"                          # All existing investors grandfathered permanently
+    TIME_LIMITED = "time_limited"          # Grace period for compliance (e.g., 12 months)
+    TRANSACTION_BASED = "transaction_based"  # Grandfather until next transaction
+    HOLDINGS_FROZEN = "holdings_frozen"    # Can't add, can only sell
 
 
 @dataclass
@@ -656,6 +671,244 @@ Full Text:
         )
 
         return result.to_dict()
+
+    async def execute_with_grandfathering(
+        self,
+        change_id: str,
+        strategy: GrandfatheringStrategy,
+        casualties: List[str],
+        applied_by: str,
+        grace_period_days: Optional[int] = None,
+        notes: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Execute a grandfathering strategy via the Node.js API.
+
+        This is the "God Mode" execution that:
+        1. Calls the Node.js /oracle/execute-strategy endpoint
+        2. Bulk updates affected investors to GRANDFATHERED status
+        3. Records the audit trail
+
+        GRANDFATHERED investors can SELL but cannot BUY.
+        This prevents the "Liquidity Trap" - regulatory changes don't freeze capital.
+
+        Args:
+            change_id: ID of the approved change (becomes proposalId)
+            strategy: Grandfathering strategy to apply
+            casualties: List of investor IDs to grandfather
+            applied_by: Compliance officer ID (for audit trail)
+            grace_period_days: For TIME_LIMITED strategy, the grace period
+            notes: Optional notes about the execution
+
+        Returns:
+            Execution result from the Node.js API
+        """
+        # Get API base URL from environment or default
+        api_base_url = os.getenv("NODE_API_URL", "http://localhost:3000")
+        endpoint = f"{api_base_url}/api/v1/compliance/oracle/execute-strategy"
+
+        payload = {
+            "proposalId": change_id,
+            "strategy": strategy.value,
+            "casualties": casualties,
+            "appliedBy": applied_by,
+            "notes": notes,
+        }
+
+        if grace_period_days and strategy == GrandfatheringStrategy.TIME_LIMITED:
+            payload["gracePeriodDays"] = grace_period_days
+
+        logger.info(
+            f"Executing grandfathering strategy via Node.js API: "
+            f"strategy={strategy.value}, casualties={len(casualties)}"
+        )
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    endpoint,
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                    timeout=aiohttp.ClientTimeout(total=30)
+                ) as response:
+                    result = await response.json()
+
+                    if response.status != 200:
+                        logger.error(
+                            f"Grandfathering execution failed: {response.status} - {result}"
+                        )
+                        return {
+                            "status": "error",
+                            "http_status": response.status,
+                            "error": result.get("error", "Unknown error")
+                        }
+
+                    logger.info(
+                        f"Grandfathering execution complete: "
+                        f"grandfathered={result.get('grandfatheredCount', 0)}, "
+                        f"failed={result.get('failedCount', 0)}"
+                    )
+
+                    # Update the pending change with execution result
+                    change = self.get_change_by_id(change_id)
+                    if change:
+                        if not change.impact_simulation:
+                            change.impact_simulation = {}
+                        change.impact_simulation["execution_result"] = result
+                        change.impact_simulation["executed_at"] = datetime.now().isoformat()
+                        change.impact_simulation["strategy_applied"] = strategy.value
+                        self._save_pending_change(change)
+
+                    return result
+
+        except aiohttp.ClientError as e:
+            logger.error(f"HTTP error during grandfathering execution: {e}")
+            return {
+                "status": "error",
+                "error": f"HTTP error: {str(e)}"
+            }
+        except Exception as e:
+            logger.error(f"Unexpected error during grandfathering execution: {e}")
+            return {
+                "status": "error",
+                "error": str(e)
+            }
+
+    async def approve_and_execute(
+        self,
+        change_id: str,
+        reviewer: str,
+        strategy: GrandfatheringStrategy,
+        notes: Optional[str] = None,
+        grace_period_days: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """
+        Approve a change AND execute grandfathering in one workflow.
+
+        This is the complete "God Mode" approval flow:
+        1. Approve the change
+        2. Get casualties from impact simulation
+        3. Execute grandfathering strategy
+        4. Apply the rule change
+
+        Args:
+            change_id: ID of the change to approve
+            reviewer: Compliance officer approving
+            strategy: Grandfathering strategy to apply to casualties
+            notes: Optional review notes
+            grace_period_days: For TIME_LIMITED strategy
+
+        Returns:
+            Combined result with approval and execution status
+        """
+        # 1. Get the change and verify it has impact simulation
+        change = self.get_change_by_id(change_id)
+        if not change:
+            return {"status": "error", "reason": f"Change {change_id} not found"}
+
+        if change.status != ChangeStatus.PENDING_REVIEW:
+            return {"status": "error", "reason": f"Change already processed: {change.status.value}"}
+
+        # 2. Get casualties from impact simulation
+        casualties = []
+        if change.impact_simulation and "casualties" in change.impact_simulation:
+            casualties = [
+                c.get("investor_id") or c.get("id")
+                for c in change.impact_simulation["casualties"]
+                if c.get("investor_id") or c.get("id")
+            ]
+
+        logger.info(
+            f"Approve and execute: change={change_id}, strategy={strategy.value}, "
+            f"casualties={len(casualties)}"
+        )
+
+        # 3. Execute grandfathering if there are casualties
+        execution_result = None
+        if casualties and strategy != GrandfatheringStrategy.NONE:
+            execution_result = await self.execute_with_grandfathering(
+                change_id=change_id,
+                strategy=strategy,
+                casualties=casualties,
+                applied_by=reviewer,
+                grace_period_days=grace_period_days,
+                notes=notes
+            )
+
+            if execution_result.get("status") == "error":
+                logger.warning(
+                    f"Grandfathering execution failed but continuing with approval: "
+                    f"{execution_result.get('error')}"
+                )
+
+        # 4. Approve and apply the rule change
+        approval_result = self.approve_change(
+            change_id=change_id,
+            reviewer=reviewer,
+            notes=notes or f"Approved with {strategy.value} strategy for {len(casualties)} casualties",
+            apply_immediately=True
+        )
+
+        return {
+            "status": "approved_and_executed",
+            "change_id": change_id,
+            "approval": approval_result,
+            "execution": execution_result,
+            "casualties_count": len(casualties),
+            "strategy": strategy.value
+        }
+
+    async def revert_grandfathering(
+        self,
+        change_id: str,
+        reverted_by: str
+    ) -> Dict[str, Any]:
+        """
+        Revert a grandfathering decision via the Node.js API.
+
+        Use this if a proposal is cancelled or needs to be rolled back.
+
+        Args:
+            change_id: The proposal ID to revert
+            reverted_by: Who is reverting
+
+        Returns:
+            Revert result from Node.js API
+        """
+        api_base_url = os.getenv("NODE_API_URL", "http://localhost:3000")
+        endpoint = f"{api_base_url}/api/v1/compliance/oracle/revert-strategy"
+
+        payload = {
+            "proposalId": change_id,
+            "revertedBy": reverted_by
+        }
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    endpoint,
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                    timeout=aiohttp.ClientTimeout(total=30)
+                ) as response:
+                    result = await response.json()
+
+                    if response.status != 200:
+                        return {
+                            "status": "error",
+                            "http_status": response.status,
+                            "error": result.get("error", "Unknown error")
+                        }
+
+                    logger.info(
+                        f"Grandfathering reverted: {result.get('revertedCount', 0)} investors"
+                    )
+
+                    return result
+
+        except Exception as e:
+            logger.error(f"Error reverting grandfathering: {e}")
+            return {"status": "error", "error": str(e)}
 
 
 # Module-level convenience functions

@@ -10,7 +10,13 @@
       "Bash(npx tsc:*)",
       "Bash(curl:*)",
       "Bash(npm run lint)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nAdd Legal-BERT preprocessing layer for 2-model AI pipeline\n\nImplements Legal-BERT → Mistral architecture where:\n- Legal-BERT handles document understanding (classification, entity extraction, regulation detection)\n- Mistral handles compliance reasoning (conflict resolution, regulatory interpretation)\n\nNew files:\n- ai/inference/providers/legalbert_client.py: Full Legal-BERT client with HuggingFace transformers\n\nUpdated files:\n- ai/inference/api/compliance_api.py: Added /classify-legal-doc, /analyze-compliance-pipeline, /models/status endpoints\n- api/src/services/aiComplianceEnhanced.ts: Added classifyLegalDocument(), validateTokenComplianceWithPipeline()\n- api/src/routes/compliance.ts: Added 6 new AI pipeline endpoints\n- api/src/types/conflicts.ts: Added Legal-BERT types (LegalDocumentType, LegalEntity, etc.)\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n)\")",
+      "Bash(npm test)",
+      "Bash(npm test:*)",
+      "Bash(dir:*)",
+      "Bash(npm install)",
+      "Bash(npm run compile:*)"
     ]
   }
 }

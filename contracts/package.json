@@ -1,0 +1,36 @@
+{
+  "name": "@rwa-platform/contracts",
+  "version": "1.0.0",
+  "description": "RWA Tokenization Platform - Smart Contracts",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "test:coverage": "hardhat coverage",
+    "deploy:sepolia": "hardhat run scripts/deploy-compliance.ts --network sepolia",
+    "deploy:polygon": "hardhat run scripts/deploy-compliance.ts --network polygon",
+    "verify": "hardhat verify --network",
+    "clean": "hardhat clean",
+    "node": "hardhat node"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "@nomicfoundation/hardhat-verify": "^2.0.0",
+    "@openzeppelin/contracts": "^5.0.1",
+    "@types/chai": "^4.3.11",
+    "@types/mocha": "^10.0.6",
+    "@types/node": "^20.10.8",
+    "chai": "^4.4.0",
+    "dotenv": "^16.3.1",
+    "hardhat": "^2.19.4",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  },
+  "keywords": [
+    "rwa",
+    "tokenization",
+    "compliance",
+    "ethereum",
+    "solidity"
+  ],
+  "license": "MIT"
+}

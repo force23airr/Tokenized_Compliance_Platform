@@ -125,6 +125,17 @@ model Investor {
   amlStatus         String   @default("pending")
   amlLastChecked    DateTime?
 
+  // Directional Compliance (Smart Grandfathering)
+  complianceStatus       String    @default("approved") // approved, frozen, grandfathered, unauthorized
+  complianceStatusReason String?   // e.g., "Regulatory Change Proposal chg_xxx - income threshold update"
+  complianceStatusAt     DateTime? // When status was last changed
+  gracePeriodEndsAt      DateTime? // For time-limited grandfathering
+
+  // On-Chain Sync (for ComplianceRegistry contract)
+  onChainSynced          Boolean   @default(false)  // Whether status is synced to blockchain
+  onChainSyncedAt        DateTime? // When last synced to blockchain
+  onChainTxHash          String?   // Transaction hash of last sync
+
   // Documents
   documents         Json     // Array of document URLs/hashes
 

@@ -1,6 +1,14 @@
 import axios from 'axios';
 import { config } from '../config';
 import { logger } from '../utils/logger';
+import {
+  validateDirectionalCompliance,
+  logTransferValidation,
+  canSend,
+  canReceive,
+  getStatusCapabilities,
+} from './directionalCompliance';
+import { ComplianceStatus } from '../types/conflicts';
 
 interface AMLCheckParams {
   name: string;
@@ -74,12 +82,71 @@ export async function checkTransferCompliance(params: {
   fromInvestor: any;
   toInvestor: any;
   amount: string;
+  transferId?: string;
 }): Promise<{
   approved: boolean;
   checks: any[];
   failureReason?: string;
+  directionalResult?: {
+    senderCanSend: boolean;
+    recipientCanReceive: boolean;
+    senderCapabilities?: ReturnType<typeof getStatusCapabilities>;
+    recipientCapabilities?: ReturnType<typeof getStatusCapabilities>;
+  };
 }> {
   const checks: any[] = [];
+
+  // ═══════════════════════════════════════════════════════════════════
+  // CHECK 0: DIRECTIONAL COMPLIANCE (Smart Grandfathering)
+  // ═══════════════════════════════════════════════════════════════════
+  // This check MUST come first - it's the "fail fast" gate.
+  // If a GRANDFATHERED investor tries to BUY, we block immediately.
+  // No point running expensive AML checks if the direction is blocked.
+  // ═══════════════════════════════════════════════════════════════════
+
+  const senderStatus = params.fromInvestor.complianceStatus || ComplianceStatus.APPROVED;
+  const recipientStatus = params.toInvestor.complianceStatus || ComplianceStatus.APPROVED;
+
+  const directionalResult = validateDirectionalCompliance(senderStatus, recipientStatus);
+
+  // Log for audit trail
+  if (params.transferId) {
+    logTransferValidation(params.transferId, senderStatus, recipientStatus, directionalResult);
+  }
+
+  checks.push({
+    check: 'DIRECTIONAL_COMPLIANCE',
+    status: directionalResult.allowed ? 'PASSED' : 'FAILED',
+    details: {
+      senderStatus,
+      recipientStatus,
+      senderCanSend: directionalResult.senderCanSend,
+      recipientCanReceive: directionalResult.recipientCanReceive,
+      reason: directionalResult.reason,
+    },
+  });
+
+  // If directional check fails, return immediately - no need to run other checks
+  if (!directionalResult.allowed) {
+    logger.warn('Transfer blocked by directional compliance', {
+      tokenId: params.tokenId,
+      senderStatus,
+      recipientStatus,
+      reason: directionalResult.reason,
+    });
+
+    return {
+      approved: false,
+      checks,
+      failureReason: directionalResult.reason,
+      directionalResult: {
+        senderCanSend: directionalResult.senderCanSend,
+        recipientCanReceive: directionalResult.recipientCanReceive,
+        senderCapabilities: getStatusCapabilities(senderStatus),
+        recipientCapabilities: getStatusCapabilities(recipientStatus),
+      },
+    };
+  }
 
   // Check 1: Both parties whitelisted
   // (Would query database in real implementation)
@@ -124,5 +191,40 @@ export async function checkTransferCompliance(params: {
     approved: allPassed,
     checks,
     failureReason: allPassed ? undefined : 'One or more compliance checks failed',
+    directionalResult: {
+      senderCanSend: directionalResult.senderCanSend,
+      recipientCanReceive: directionalResult.recipientCanReceive,
+      senderCapabilities: getStatusCapabilities(senderStatus),
+      recipientCapabilities: getStatusCapabilities(recipientStatus),
+    },
   };
+}
+
+/**
+ * Quick check if an investor can participate in a transfer direction.
+ * Useful for UI pre-validation before user initiates transfer.
+ */
+export function preValidateTransferDirection(
+  investorStatus: ComplianceStatus | string,
+  direction: 'send' | 'receive'
+): {
+  allowed: boolean;
+  reason?: string;
+  capabilities: ReturnType<typeof getStatusCapabilities>;
+} {
+  const capabilities = getStatusCapabilities(investorStatus);
+
+  if (direction === 'send') {
+    return {
+      allowed: canSend(investorStatus),
+      reason: canSend(investorStatus) ? undefined : capabilities.description,
+      capabilities,
+    };
+  } else {
+    return {
+      allowed: canReceive(investorStatus),
+      reason: canReceive(investorStatus) ? undefined : capabilities.description,
+      capabilities,
+    };
+  }
 }

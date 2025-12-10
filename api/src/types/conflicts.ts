@@ -4,6 +4,53 @@
  * Typed conflict categorization for analytics, auditing, and resolution tracking.
  */
 
+// ============= Directional Compliance States =============
+
+/**
+ * ComplianceStatus controls what actions an investor can take.
+ * This enables "Smart Grandfathering" - regulatory changes don't trap capital.
+ */
+export enum ComplianceStatus {
+  APPROVED = 'approved',           // Full access: Can Buy & Sell
+  FROZEN = 'frozen',               // No access: Cannot Buy or Sell (Sanctions/AML)
+  GRANDFATHERED = 'grandfathered', // Sell-only: Can Sell, Cannot Buy (Regulatory Shift)
+  UNAUTHORIZED = 'unauthorized',   // No access: Cannot Interact (Never onboarded)
+}
+
+/**
+ * Strategy for handling investors affected by regulatory changes.
+ */
+export enum GrandfatheringStrategy {
+  NONE = 'none',                           // No grandfathering, immediate enforcement
+  FULL = 'full',                           // All existing investors grandfathered permanently
+  TIME_LIMITED = 'time_limited',           // Grace period for compliance (e.g., 12 months)
+  TRANSACTION_BASED = 'transaction_based', // Grandfather until next transaction
+  HOLDINGS_FROZEN = 'holdings_frozen',     // Can't add, can only sell
+}
+
+/**
+ * Execution plan for applying a compliance strategy to casualties.
+ */
+export interface ExecutionPlan {
+  proposalId: string;
+  strategy: GrandfatheringStrategy;
+  casualties: string[];  // Investor IDs
+  appliedBy: string;     // Compliance officer who approved
+  appliedAt: Date;
+  gracePeriodDays?: number;  // For TIME_LIMITED strategy
+  notes?: string;
+}
+
+/**
+ * Result of validating directional compliance for a transfer.
+ */
+export interface DirectionalComplianceResult {
+  allowed: boolean;
+  reason?: string;
+  senderCanSend: boolean;
+  recipientCanReceive: boolean;
+}
+
 // ============= Conflict Type Enums =============
 
 export enum ConflictType {

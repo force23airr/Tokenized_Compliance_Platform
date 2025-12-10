@@ -18,6 +18,8 @@ import * as travelRuleService from '../services/travelRuleService';
 import * as complianceCaseService from '../services/complianceCaseService';
 import * as auditLogService from '../services/complianceAuditLogService';
 import * as aiComplianceService from '../services/aiComplianceEnhanced';
+import * as complianceExecutionService from '../services/complianceExecution';
+import { preValidateTransferDirection } from '../services/compliance';
 import { logger } from '../utils/logger';
 import {
   SanctionsCheckType,
@@ -28,6 +30,8 @@ import {
   CasePriority,
   AuditActorType,
   AuditAction,
+  GrandfatheringStrategy,
+  ComplianceStatus,
 } from '../types/conflicts';
 
 const router = Router();
@@ -981,6 +985,245 @@ router.post('/check-investor-compatibility', async (req: Request, res: Response)
     logger.error('Investor compatibility check API error', { error });
     return res.status(500).json({ error: 'Failed to check investor compatibility' });
   }
+});
+
+// ============= Oracle Execution & Smart Grandfathering Routes =============
+
+/**
+ * POST /api/v1/compliance/oracle/execute-strategy
+ * Execute a grandfathering strategy on casualties from a rule change.
+ *
+ * This is the "God Mode" endpoint that transforms "Regulatory Rug Pull" into
+ * seamless capital transition. When a Compliance Officer approves a rule change,
+ * this endpoint bulk updates affected investors to GRANDFATHERED status.
+ *
+ * GRANDFATHERED investors can SELL but cannot BUY - preventing the "Liquidity Trap".
+ */
+router.post('/oracle/execute-strategy', async (req: Request, res: Response) => {
+  try {
+    const { proposalId, strategy, casualties, appliedBy, gracePeriodDays, notes } = req.body;
+
+    if (!proposalId || !strategy || !casualties || !Array.isArray(casualties)) {
+      return res.status(400).json({
+        error: 'proposalId, strategy, and casualties (array of investor IDs) are required',
+      });
+    }
+
+    if (!appliedBy) {
+      return res.status(400).json({
+        error: 'appliedBy (compliance officer ID) is required for audit trail',
+      });
+    }
+
+    // Validate strategy
+    const validStrategies = Object.values(GrandfatheringStrategy);
+    if (!validStrategies.includes(strategy)) {
+      return res.status(400).json({
+        error: `Invalid strategy. Must be one of: ${validStrategies.join(', ')}`,
+      });
+    }
+
+    const result = await complianceExecutionService.executeComplianceStrategy({
+      proposalId,
+      strategy: strategy as GrandfatheringStrategy,
+      casualties,
+      appliedBy,
+      appliedAt: new Date(),
+      gracePeriodDays,
+      notes,
+    });
+
+    logger.info('Oracle strategy executed via API', {
+      proposalId,
+      strategy,
+      casualtyCount: casualties.length,
+      grandfatheredCount: result.grandfatheredCount,
+      success: result.success,
+    });
+
+    return res.json(result);
+  } catch (error) {
+    logger.error('Oracle execute-strategy API error', { error });
+    return res.status(500).json({ error: 'Failed to execute grandfathering strategy' });
+  }
+});
+
+/**
+ * POST /api/v1/compliance/oracle/revert-strategy
+ * Revert a grandfathering decision (e.g., if a proposal is cancelled).
+ */
+router.post('/oracle/revert-strategy', async (req: Request, res: Response) => {
+  try {
+    const { proposalId, revertedBy } = req.body;
+
+    if (!proposalId || !revertedBy) {
+      return res.status(400).json({
+        error: 'proposalId and revertedBy are required',
+      });
+    }
+
+    const result = await complianceExecutionService.revertGrandfathering(proposalId, revertedBy);
+
+    logger.info('Grandfathering reverted via API', {
+      proposalId,
+      revertedBy,
+      revertedCount: result.revertedCount,
+    });
+
+    return res.json(result);
+  } catch (error) {
+    logger.error('Oracle revert-strategy API error', { error });
+    return res.status(500).json({ error: 'Failed to revert grandfathering' });
+  }
+});
+
+/**
+ * GET /api/v1/compliance/directional/status-summary
+ * Get summary of compliance status distribution across all investors.
+ */
+router.get('/directional/status-summary', async (req: Request, res: Response) => {
+  try {
+    const summary = await complianceExecutionService.getComplianceStatusSummary();
+
+    return res.json({
+      ...summary,
+      description: {
+        approved: 'Full access - can buy and sell',
+        frozen: 'No access - AML/Sanctions block',
+        grandfathered: 'Sell-only - can exit positions but cannot add',
+        unauthorized: 'No access - never completed onboarding',
+      },
+    });
+  } catch (error) {
+    logger.error('Status summary API error', { error });
+    return res.status(500).json({ error: 'Failed to get compliance status summary' });
+  }
+});
+
+/**
+ * GET /api/v1/compliance/directional/expired-grace-periods
+ * Check for investors with expired grace periods.
+ * Should be called by a scheduled job (e.g., daily cron).
+ */
+router.get('/directional/expired-grace-periods', async (req: Request, res: Response) => {
+  try {
+    const result = await complianceExecutionService.checkExpiredGracePeriods();
+
+    return res.json({
+      ...result,
+      message:
+        result.expiredCount > 0
+          ? `Found ${result.expiredCount} investors with expired grace periods requiring action`
+          : 'No expired grace periods found',
+    });
+  } catch (error) {
+    logger.error('Expired grace periods API error', { error });
+    return res.status(500).json({ error: 'Failed to check expired grace periods' });
+  }
+});
+
+/**
+ * POST /api/v1/compliance/directional/pre-validate
+ * Pre-validate if an investor can participate in a transfer direction.
+ * Useful for UI to show capabilities before user initiates transfer.
+ */
+router.post('/directional/pre-validate', async (req: Request, res: Response) => {
+  try {
+    const { investorStatus, direction } = req.body;
+
+    if (!investorStatus || !direction) {
+      return res.status(400).json({
+        error: 'investorStatus and direction (send/receive) are required',
+      });
+    }
+
+    if (!['send', 'receive'].includes(direction)) {
+      return res.status(400).json({
+        error: 'direction must be "send" or "receive"',
+      });
+    }
+
+    const result = preValidateTransferDirection(
+      investorStatus as ComplianceStatus,
+      direction as 'send' | 'receive'
+    );
+
+    return res.json(result);
+  } catch (error) {
+    logger.error('Pre-validate direction API error', { error });
+    return res.status(500).json({ error: 'Failed to pre-validate transfer direction' });
+  }
+});
+
+/**
+ * GET /api/v1/compliance/directional/strategies
+ * Get available grandfathering strategies with descriptions.
+ */
+router.get('/directional/strategies', async (_req: Request, res: Response) => {
+  return res.json({
+    strategies: [
+      {
+        value: GrandfatheringStrategy.NONE,
+        name: 'No Grandfathering',
+        description: 'Immediate enforcement - investors marked UNAUTHORIZED. Nuclear option.',
+        effect: 'All transfers blocked immediately',
+      },
+      {
+        value: GrandfatheringStrategy.FULL,
+        name: 'Full Grandfathering',
+        description: 'All existing investors permanently grandfathered.',
+        effect: 'Can SELL, cannot BUY - indefinitely',
+      },
+      {
+        value: GrandfatheringStrategy.TIME_LIMITED,
+        name: 'Time-Limited Grandfathering',
+        description: 'Grace period for compliance (e.g., 12 months to re-certify).',
+        effect: 'Can SELL, cannot BUY - until grace period expires',
+      },
+      {
+        value: GrandfatheringStrategy.TRANSACTION_BASED,
+        name: 'Transaction-Based Grandfathering',
+        description: 'Grandfathered until next transaction.',
+        effect: 'Status checked at transfer time',
+      },
+      {
+        value: GrandfatheringStrategy.HOLDINGS_FROZEN,
+        name: 'Holdings Frozen',
+        description: 'Cannot add to position, can only sell.',
+        effect: 'Same as FULL, explicit naming',
+      },
+    ],
+    complianceStatuses: [
+      {
+        value: ComplianceStatus.APPROVED,
+        name: 'Approved',
+        canBuy: true,
+        canSell: true,
+        description: 'Full access - can buy and sell tokens',
+      },
+      {
+        value: ComplianceStatus.GRANDFATHERED,
+        name: 'Grandfathered',
+        canBuy: false,
+        canSell: true,
+        description: 'Sell-only - can exit positions but cannot add new ones',
+      },
+      {
+        value: ComplianceStatus.FROZEN,
+        name: 'Frozen',
+        canBuy: false,
+        canSell: false,
+        description: 'Account frozen - all transfers blocked (AML/Sanctions)',
+      },
+      {
+        value: ComplianceStatus.UNAUTHORIZED,
+        name: 'Unauthorized',
+        canBuy: false,
+        canSell: false,
+        description: 'Unauthorized - onboarding not complete',
+      },
+    ],
+  });
 });
 
 // ============= Statistics Routes =============

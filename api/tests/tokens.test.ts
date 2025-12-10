@@ -4,6 +4,8 @@
  * Tests the complete token creation and retrieval flow
  */
 
+/// <reference path="./setup.ts" />
+
 import request from 'supertest';
 import app from '../src/index';
 import { prisma } from '../src/config/prisma';
@@ -14,13 +16,13 @@ describe('Token API', () => {
 
   beforeAll(async () => {
     // Create a test API key
-    apiKey = await global.testUtils.createTestApiKey();
+    apiKey = await globalThis.testUtils.createTestApiKey();
     authHeader = `Bearer ${apiKey.key}`;
   });
 
   afterAll(async () => {
     // Clean up test data
-    await global.testUtils.cleanup();
+    await globalThis.testUtils.cleanup();
   });
 
   describe('POST /v1/tokens/create', () => {

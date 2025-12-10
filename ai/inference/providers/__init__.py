@@ -2,6 +2,9 @@
 AI Inference Providers
 
 This module provides clients for various AI inference APIs.
+
+Architecture:
+    Legal-BERT (preprocessing) → Mistral (reasoning)
 """
 
 from .together_client import (
@@ -15,7 +18,21 @@ from .together_client import (
     cleanup
 )
 
+from .legalbert_client import (
+    LegalBertClient,
+    LegalDocumentAnalysis,
+    DocumentType,
+    RegulationType,
+    LegalEntity,
+    RegulationReference,
+    LegalClause,
+    get_client as get_legalbert_client,
+    analyze_document,
+    get_structured_context
+)
+
 __all__ = [
+    # Together.ai / Mistral
     "TogetherClient",
     "JurisdictionResult",
     "ConflictResult",
@@ -23,5 +40,16 @@ __all__ = [
     "Resolution",
     "ConflictType",
     "get_client",
-    "cleanup"
+    "cleanup",
+    # Legal-BERT
+    "LegalBertClient",
+    "LegalDocumentAnalysis",
+    "DocumentType",
+    "RegulationType",
+    "LegalEntity",
+    "RegulationReference",
+    "LegalClause",
+    "get_legalbert_client",
+    "analyze_document",
+    "get_structured_context",
 ]

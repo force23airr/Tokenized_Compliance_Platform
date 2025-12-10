@@ -17,6 +17,7 @@ import * as lockupService from '../services/lockupService';
 import * as travelRuleService from '../services/travelRuleService';
 import * as complianceCaseService from '../services/complianceCaseService';
 import * as auditLogService from '../services/complianceAuditLogService';
+import * as aiComplianceService from '../services/aiComplianceEnhanced';
 import { logger } from '../utils/logger';
 import {
   SanctionsCheckType,
@@ -781,6 +782,204 @@ router.get('/audit-logs/export/:caseId', async (req: Request, res: Response) => 
   } catch (error) {
     logger.error('Export audit logs API error', { error });
     return res.status(500).json({ error: 'Failed to export audit logs' });
+  }
+});
+
+// ============= AI/Legal-BERT Pipeline Routes =============
+
+/**
+ * POST /api/v1/compliance/analyze-document
+ * Analyze a legal document using Legal-BERT (standalone preprocessing)
+ *
+ * Use this endpoint to classify documents and extract structured information
+ * before running full compliance validation.
+ */
+router.post('/analyze-document', async (req: Request, res: Response) => {
+  try {
+    const { documentText } = req.body;
+
+    if (!documentText) {
+      return res.status(400).json({ error: 'documentText is required' });
+    }
+
+    if (documentText.length < 50) {
+      return res.status(400).json({ error: 'Document text too short for analysis (min 50 chars)' });
+    }
+
+    const result = await aiComplianceService.analyzeDocumentStructure(documentText);
+
+    if (!result.success) {
+      return res.status(500).json({
+        error: 'Document analysis failed',
+        details: result.error,
+      });
+    }
+
+    logger.info('Document analyzed via Legal-BERT API', {
+      documentType: result.analysis?.documentType,
+      confidence: result.analysis?.documentTypeConfidence,
+    });
+
+    return res.json({
+      success: true,
+      analysis: result.analysis,
+    });
+  } catch (error) {
+    logger.error('Document analysis API error', { error });
+    return res.status(500).json({ error: 'Failed to analyze document' });
+  }
+});
+
+/**
+ * POST /api/v1/compliance/validate-with-pipeline
+ * Full 2-model pipeline: Legal-BERT preprocessing → Mistral reasoning
+ *
+ * This is the enhanced compliance validation that uses both models:
+ * - Legal-BERT analyzes the document and extracts structured information
+ * - Mistral receives enriched context for better compliance reasoning
+ */
+router.post('/validate-with-pipeline', async (req: Request, res: Response) => {
+  try {
+    const {
+      assetType,
+      jurisdictions,
+      complianceRules,
+      investorTypes,
+      documentText,
+      useLegalBert,
+    } = req.body;
+
+    if (!assetType || !jurisdictions || !Array.isArray(jurisdictions)) {
+      return res.status(400).json({
+        error: 'assetType and jurisdictions (array) are required',
+      });
+    }
+
+    const result = await aiComplianceService.validateTokenComplianceWithPipeline({
+      assetType,
+      jurisdictions,
+      complianceRules: complianceRules || {},
+      investorTypes,
+      documentText,
+      useLegalBert: useLegalBert !== false, // Default to true
+    });
+
+    logger.info('2-Model pipeline validation completed via API', {
+      approved: result.approved,
+      confidence: result.confidence,
+      pipelineUsed: result.pipelineUsed,
+      hasLegalBertAnalysis: !!result.legalBertAnalysis,
+    });
+
+    return res.json(result);
+  } catch (error) {
+    logger.error('Pipeline validation API error', { error });
+    return res.status(500).json({ error: 'Failed to run pipeline validation' });
+  }
+});
+
+/**
+ * POST /api/v1/compliance/classify-jurisdiction
+ * Classify investor jurisdiction using AI
+ */
+router.post('/classify-jurisdiction', async (req: Request, res: Response) => {
+  try {
+    const { documentText, documentType } = req.body;
+
+    if (!documentText) {
+      return res.status(400).json({ error: 'documentText is required' });
+    }
+
+    const result = await aiComplianceService.classifyJurisdictionWithAI(
+      documentText,
+      documentType || 'address'
+    );
+
+    return res.json(result);
+  } catch (error) {
+    logger.error('Jurisdiction classification API error', { error });
+    return res.status(500).json({ error: 'Failed to classify jurisdiction' });
+  }
+});
+
+/**
+ * POST /api/v1/compliance/validate-token-config
+ * Validate token configuration against regulatory requirements
+ */
+router.post('/validate-token-config', async (req: Request, res: Response) => {
+  try {
+    const { assetType, jurisdictions, complianceRules } = req.body;
+
+    if (!assetType || !jurisdictions) {
+      return res.status(400).json({
+        error: 'assetType and jurisdictions are required',
+      });
+    }
+
+    const result = await aiComplianceService.validateTokenConfigWithAI({
+      assetType,
+      jurisdictions,
+      complianceRules: complianceRules || {},
+    });
+
+    return res.json(result);
+  } catch (error) {
+    logger.error('Token config validation API error', { error });
+    return res.status(500).json({ error: 'Failed to validate token config' });
+  }
+});
+
+/**
+ * GET /api/v1/compliance/models/status
+ * Get status of AI models (Legal-BERT and Mistral)
+ */
+router.get('/models/status', async (req: Request, res: Response) => {
+  try {
+    const status = await aiComplianceService.getModelStatus();
+
+    return res.json({
+      status: 'ok',
+      models: {
+        legalBert: {
+          name: 'Legal-BERT',
+          description: 'Document preprocessing and classification',
+          ...status.legalBert,
+        },
+        mistral: {
+          name: 'Mistral 7B',
+          description: 'Compliance reasoning and conflict resolution',
+          ...status.mistral,
+        },
+      },
+      pipeline: {
+        description: '2-Model Pipeline: Legal-BERT (preprocessing) → Mistral (reasoning)',
+        available: status.legalBert.available && status.mistral.available,
+      },
+    });
+  } catch (error) {
+    logger.error('Model status API error', { error });
+    return res.status(500).json({ error: 'Failed to get model status' });
+  }
+});
+
+/**
+ * POST /api/v1/compliance/check-investor-compatibility
+ * Check if an investor is compatible with a token's compliance rules
+ */
+router.post('/check-investor-compatibility', async (req: Request, res: Response) => {
+  try {
+    const { investor, token } = req.body;
+
+    if (!investor || !token) {
+      return res.status(400).json({ error: 'investor and token are required' });
+    }
+
+    const result = await aiComplianceService.checkInvestorTokenCompatibility(investor, token);
+
+    return res.json(result);
+  } catch (error) {
+    logger.error('Investor compatibility check API error', { error });
+    return res.status(500).json({ error: 'Failed to check investor compatibility' });
   }
 });
 

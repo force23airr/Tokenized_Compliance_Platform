@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 """
 RWA Compliance AI - Inference API
-FastAPI service for real-time compliance checks using Together.ai.
+
+FastAPI service for real-time compliance checks using a 2-model architecture:
+    Legal-BERT (preprocessing) → Mistral (reasoning)
+
+Legal-BERT: Document classification, entity extraction, legal context tagging
+Mistral: Compliance reasoning, conflict resolution, regulatory interpretation
 """
 
 import os
@@ -36,6 +41,14 @@ from inference.providers.together_client import (
     get_client,
     cleanup
 )
+from inference.providers.legalbert_client import (
+    LegalBertClient,
+    LegalDocumentAnalysis,
+    DocumentType,
+    get_client as get_legalbert_client,
+    analyze_document as legalbert_analyze,
+    get_structured_context
+)
 from inference.prompts import (
     JURISDICTION_CLASSIFICATION,
     ACCREDITATION_ANALYSIS,
@@ -45,8 +58,17 @@ from inference.prompts import (
 
 app = FastAPI(
     title="RWA Compliance AI",
-    description="AI-powered regulatory compliance for multi-jurisdiction tokenization using Together.ai",
-    version="2.0.0"
+    description="""
+AI-powered regulatory compliance for multi-jurisdiction tokenization.
+
+**Architecture:**
+- **Legal-BERT**: Document preprocessing (classification, entity extraction)
+- **Mistral 7B**: Compliance reasoning (conflict resolution, regulatory interpretation)
+
+The 2-model pipeline provides expert-level legal document understanding
+combined with advanced reasoning capabilities.
+    """,
+    version="3.0.0"
 )
 
 # Configuration
@@ -75,10 +97,21 @@ class JurisdictionResponse(BaseModel):
     reasoning: Optional[str] = None
     ruleset_version: Optional[str] = None
 
+class DocumentAnalysisContext(BaseModel):
+    """Context from Legal-BERT preprocessing (optional)"""
+    document_type: str
+    confidence: float
+    regulations: List[str]
+    jurisdictions: List[str]
+    key_clauses: List[str]
+
 class ConflictRequest(BaseModel):
     jurisdictions: List[str]
     asset_type: str
     investor_types: List[str]
+    # Optional Legal-BERT context for 2-model pipeline
+    legal_bert_context: Optional[str] = None
+    document_analysis: Optional[DocumentAnalysisContext] = None
 
 class ConflictResponse(BaseModel):
     has_conflicts: bool
@@ -113,6 +146,64 @@ class DocumentResponse(BaseModel):
     document_text: str
     applicable_regulations: List[str]
     warnings: List[str]
+
+
+# ============== Legal-BERT Request/Response Models ==============
+
+class LegalDocumentRequest(BaseModel):
+    """Request for Legal-BERT document analysis"""
+    document_text: str
+    include_embeddings: bool = False
+
+class LegalEntityResponse(BaseModel):
+    entity_type: str
+    name: str
+    jurisdiction: Optional[str] = None
+    identifier: Optional[str] = None
+    confidence: float
+
+class RegulationReferenceResponse(BaseModel):
+    regulation_type: str
+    full_reference: str
+    section: Optional[str] = None
+    jurisdiction: str
+    confidence: float
+
+class LegalClauseResponse(BaseModel):
+    clause_type: str
+    text_snippet: str
+    relevance_score: float
+
+class LegalDocumentResponse(BaseModel):
+    """Response from Legal-BERT document analysis"""
+    document_type: str
+    document_type_confidence: float
+    entities: List[LegalEntityResponse]
+    regulations: List[RegulationReferenceResponse]
+    key_clauses: List[LegalClauseResponse]
+    jurisdictions: List[str]
+    structured_summary: dict
+    model_used: str
+    processing_time_ms: float
+
+class EnhancedComplianceRequest(BaseModel):
+    """Request for 2-model pipeline (Legal-BERT + Mistral)"""
+    document_text: str
+    asset_type: str
+    additional_jurisdictions: List[str] = []
+
+class EnhancedComplianceResponse(BaseModel):
+    """Response from 2-model pipeline"""
+    # Legal-BERT analysis
+    document_analysis: LegalDocumentResponse
+    # Mistral compliance decision
+    compliance_decision: dict
+    # Combined result
+    approved: bool
+    confidence: float
+    requires_manual_review: bool
+    reasoning: str
+    pipeline_version: str = "legal-bert-v1 + mistral-7b-v0.2"
 
 
 # ============== Regulatory Rules Loading ==============
@@ -300,19 +391,50 @@ async def resolve_conflicts(request: ConflictRequest):
     """
     Detect and resolve regulatory conflicts across jurisdictions.
     Uses Together.ai with Mistral for intelligent conflict analysis.
+
+    When Legal-BERT context is provided (2-model pipeline), it enriches
+    the prompt with structured document analysis for better reasoning.
     """
     try:
         client = get_client()
 
+        # Merge jurisdictions from Legal-BERT analysis if provided
+        all_jurisdictions = list(set(request.jurisdictions))
+        if request.document_analysis:
+            all_jurisdictions = list(set(
+                request.jurisdictions + request.document_analysis.jurisdictions
+            ))
+
         # Build regulatory context from loaded rules
-        regulatory_context = build_regulatory_context(request.jurisdictions)
-        ruleset_version = get_current_ruleset_version(request.jurisdictions)
+        regulatory_context = build_regulatory_context(all_jurisdictions)
+        ruleset_version = get_current_ruleset_version(all_jurisdictions)
+
+        # Build enhanced context if Legal-BERT analysis is available
+        enhanced_context = regulatory_context
+        if request.legal_bert_context:
+            enhanced_context = f"""## Legal-BERT Document Analysis:
+{request.legal_bert_context}
+
+## Regulatory Rules:
+{regulatory_context}"""
+            logger.info("Using 2-model pipeline with Legal-BERT context")
+
+        # If document_analysis is provided, add structured info
+        if request.document_analysis:
+            doc_info = f"""
+## Document Structure (from Legal-BERT):
+- Document Type: {request.document_analysis.document_type} (confidence: {request.document_analysis.confidence:.2f})
+- Applicable Regulations: {', '.join(request.document_analysis.regulations)}
+- Detected Jurisdictions: {', '.join(request.document_analysis.jurisdictions)}
+- Key Clauses: {', '.join(request.document_analysis.key_clauses[:5])}
+"""
+            enhanced_context = doc_info + "\n" + enhanced_context
 
         result = await client.resolve_conflicts(
-            jurisdictions=request.jurisdictions,
+            jurisdictions=all_jurisdictions,
             asset_type=request.asset_type,
             investor_types=request.investor_types,
-            regulatory_context=regulatory_context,
+            regulatory_context=enhanced_context,
             prompt_template=CONFLICT_RESOLUTION,
             ruleset_version=ruleset_version
         )
@@ -432,6 +554,287 @@ async def generate_document(request: DocumentRequest):
             "This is not legal advice"
         ]
     )
+
+
+# ============== Legal-BERT Endpoints ==============
+
+@app.post("/classify-legal-doc", response_model=LegalDocumentResponse)
+async def classify_legal_document(request: LegalDocumentRequest):
+    """
+    Analyze a legal document using Legal-BERT.
+
+    This endpoint performs:
+    - Document type classification (Form D, PPM, etc.)
+    - Entity extraction (issuers, custodians, law firms)
+    - Regulation reference detection (Rule 506(c), Reg S, etc.)
+    - Key clause identification (lockups, transfer restrictions)
+    - Jurisdiction tagging
+
+    Use this to preprocess documents before Mistral reasoning.
+    """
+    try:
+        # Analyze with Legal-BERT
+        analysis = legalbert_analyze(request.document_text)
+
+        # Convert to response format
+        entities = [
+            LegalEntityResponse(
+                entity_type=e.entity_type,
+                name=e.name,
+                jurisdiction=e.jurisdiction,
+                identifier=e.identifier,
+                confidence=e.confidence
+            )
+            for e in analysis.entities
+        ]
+
+        regulations = [
+            RegulationReferenceResponse(
+                regulation_type=r.regulation_type.value,
+                full_reference=r.full_reference,
+                section=r.section,
+                jurisdiction=r.jurisdiction,
+                confidence=r.confidence
+            )
+            for r in analysis.regulations
+        ]
+
+        key_clauses = [
+            LegalClauseResponse(
+                clause_type=c.clause_type,
+                text_snippet=c.text_snippet,
+                relevance_score=c.relevance_score
+            )
+            for c in analysis.key_clauses
+        ]
+
+        return LegalDocumentResponse(
+            document_type=analysis.document_type.value,
+            document_type_confidence=analysis.document_type_confidence,
+            entities=entities,
+            regulations=regulations,
+            key_clauses=key_clauses,
+            jurisdictions=analysis.jurisdictions,
+            structured_summary=analysis.structured_summary,
+            model_used=analysis.model_used,
+            processing_time_ms=analysis.processing_time_ms
+        )
+
+    except Exception as e:
+        logger.error(f"Legal-BERT analysis failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Document analysis failed: {str(e)}")
+
+
+@app.post("/analyze-compliance-pipeline", response_model=EnhancedComplianceResponse)
+async def analyze_compliance_pipeline(request: EnhancedComplianceRequest):
+    """
+    Full 2-model compliance pipeline: Legal-BERT → Mistral.
+
+    **Pipeline Flow:**
+    1. Legal-BERT analyzes document structure, entities, and legal references
+    2. Structured context is built from Legal-BERT output
+    3. Mistral receives enriched prompt with legal context
+    4. Mistral performs compliance reasoning and conflict resolution
+
+    This provides the best of both models:
+    - Legal-BERT: Expert legal document understanding
+    - Mistral: Advanced regulatory reasoning
+    """
+    try:
+        # Step 1: Legal-BERT preprocessing
+        logger.info("Step 1: Running Legal-BERT analysis...")
+        analysis = legalbert_analyze(request.document_text)
+
+        # Step 2: Build enriched context for Mistral
+        legal_context = analysis.structured_summary
+
+        # Merge detected jurisdictions with additional ones
+        all_jurisdictions = list(set(
+            analysis.jurisdictions + request.additional_jurisdictions
+        ))
+        if not all_jurisdictions:
+            all_jurisdictions = ["US"]  # Default
+
+        # Step 3: Get regulatory rules
+        regulatory_context = build_regulatory_context(all_jurisdictions)
+        ruleset_version = get_current_ruleset_version(all_jurisdictions)
+
+        # Step 4: Build enhanced prompt for Mistral
+        enhanced_prompt = f"""You are analyzing a legal document for regulatory compliance.
+
+## Document Analysis (from Legal-BERT preprocessing):
+- Document Type: {legal_context.get('document_type', 'unknown')}
+- Issuer: {legal_context.get('issuer_name', 'Not identified')}
+- Detected Jurisdictions: {', '.join(analysis.jurisdictions)}
+- Applicable Regulations: {', '.join(legal_context.get('applicable_regulations', []))}
+- Has Lockup Provision: {legal_context.get('has_lockup_provision', False)}
+- Has Accreditation Requirement: {legal_context.get('has_accreditation_requirement', False)}
+- Has Transfer Restrictions: {legal_context.get('has_transfer_restrictions', False)}
+
+## Asset Type: {request.asset_type}
+
+## Regulatory Rules Context:
+{regulatory_context}
+
+## Task:
+Based on the document analysis and regulatory context, provide a compliance assessment.
+Determine if this offering complies with all applicable regulations.
+
+Respond in JSON format:
+{{
+    "approved": true/false,
+    "confidence": 0.0-1.0,
+    "conflicts": [list of regulatory conflicts if any],
+    "resolutions": [how to resolve each conflict],
+    "requirements": {{
+        "accredited_only": true/false,
+        "max_investors": number,
+        "lockup_days": number,
+        "min_investment": number
+    }},
+    "reasoning": "explanation of the decision"
+}}"""
+
+        # Step 5: Call Mistral for reasoning
+        logger.info("Step 2: Running Mistral compliance reasoning...")
+        client = get_client()
+        response_text = await client.complete(
+            prompt=enhanced_prompt,
+            max_tokens=1024,
+            temperature=0.1
+        )
+
+        # Parse Mistral response
+        try:
+            compliance_decision = json.loads(response_text)
+        except json.JSONDecodeError:
+            logger.warning("Failed to parse Mistral JSON response, using fallback")
+            compliance_decision = {
+                "approved": False,
+                "confidence": 0.5,
+                "conflicts": [],
+                "resolutions": [],
+                "requirements": {
+                    "accredited_only": True,
+                    "max_investors": 99,
+                    "lockup_days": 365,
+                    "min_investment": 100000
+                },
+                "reasoning": response_text[:500]
+            }
+
+        # Step 6: Build response
+        # Convert Legal-BERT analysis to response format
+        entities = [
+            LegalEntityResponse(
+                entity_type=e.entity_type,
+                name=e.name,
+                jurisdiction=e.jurisdiction,
+                identifier=e.identifier,
+                confidence=e.confidence
+            )
+            for e in analysis.entities
+        ]
+
+        regulations = [
+            RegulationReferenceResponse(
+                regulation_type=r.regulation_type.value,
+                full_reference=r.full_reference,
+                section=r.section,
+                jurisdiction=r.jurisdiction,
+                confidence=r.confidence
+            )
+            for r in analysis.regulations
+        ]
+
+        key_clauses = [
+            LegalClauseResponse(
+                clause_type=c.clause_type,
+                text_snippet=c.text_snippet,
+                relevance_score=c.relevance_score
+            )
+            for c in analysis.key_clauses
+        ]
+
+        document_analysis = LegalDocumentResponse(
+            document_type=analysis.document_type.value,
+            document_type_confidence=analysis.document_type_confidence,
+            entities=entities,
+            regulations=regulations,
+            key_clauses=key_clauses,
+            jurisdictions=analysis.jurisdictions,
+            structured_summary=analysis.structured_summary,
+            model_used=analysis.model_used,
+            processing_time_ms=analysis.processing_time_ms
+        )
+
+        # Combined confidence from both models
+        combined_confidence = min(
+            analysis.document_type_confidence,
+            compliance_decision.get("confidence", 0.5)
+        )
+
+        return EnhancedComplianceResponse(
+            document_analysis=document_analysis,
+            compliance_decision=compliance_decision,
+            approved=compliance_decision.get("approved", False),
+            confidence=combined_confidence,
+            requires_manual_review=combined_confidence < CONFIDENCE_THRESHOLD,
+            reasoning=compliance_decision.get("reasoning", "No reasoning provided"),
+            pipeline_version=f"legal-bert-{analysis.model_used} + mistral-7b-v0.2 | ruleset:{ruleset_version}"
+        )
+
+    except Exception as e:
+        logger.error(f"Compliance pipeline failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Compliance pipeline failed: {str(e)}"
+        )
+
+
+@app.get("/models/status")
+async def get_model_status():
+    """Get status of all AI models in the pipeline."""
+    legalbert_available = False
+    legalbert_model = "rule-based-fallback"
+
+    try:
+        legalbert_client = get_legalbert_client(load_model=False)
+        if legalbert_client.model_loaded:
+            legalbert_available = True
+            legalbert_model = legalbert_client.MODEL_NAME
+        else:
+            # Fallback mode is still "available" - just using rules instead of ML
+            legalbert_available = True
+            legalbert_model = "rule-based-fallback"
+    except Exception as e:
+        logger.warning(f"Legal-BERT status check failed: {e}")
+
+    mistral_available = False
+    mistral_model = "unknown"
+
+    try:
+        mistral_client = get_client()
+        mistral_available = True
+        mistral_model = mistral_client.model
+    except Exception as e:
+        logger.warning(f"Mistral status check failed: {e}")
+
+    return {
+        "pipeline": "legal-bert → mistral",
+        "legal_bert": {
+            "available": legalbert_available,
+            "model": legalbert_model,
+            "purpose": "Document classification, entity extraction, legal context"
+        },
+        "mistral": {
+            "available": mistral_available,
+            "model": mistral_model,
+            "provider": "together.ai",
+            "purpose": "Compliance reasoning, conflict resolution"
+        },
+        "confidence_threshold": CONFIDENCE_THRESHOLD
+    }
 
 
 # ============== Startup/Shutdown ==============

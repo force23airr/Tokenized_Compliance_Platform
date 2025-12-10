@@ -391,3 +391,101 @@ export interface ComplianceTraceIdInput {
   jurisdictions: string[];
   timestamp: Date;
 }
+
+// ============= Legal-BERT Types =============
+
+export enum LegalDocumentType {
+  FORM_D = 'form_d',
+  PPM = 'ppm',
+  RULE_506_C = 'rule_506_c',
+  RULE_506_B = 'rule_506_b',
+  REG_S = 'reg_s',
+  SUBSCRIPTION_AGREEMENT = 'subscription_agreement',
+  OPERATING_AGREEMENT = 'operating_agreement',
+  INVESTMENT_AGREEMENT = 'investment_agreement',
+  CUSTODY_AGREEMENT = 'custody_agreement',
+  TOKEN_PURCHASE_AGREEMENT = 'token_purchase_agreement',
+  PROSPECTUS = 'prospectus',
+  OFFERING_MEMORANDUM = 'offering_memorandum',
+  UNKNOWN = 'unknown',
+}
+
+export enum RegulationType {
+  REG_D = 'reg_d',
+  REG_S = 'reg_s',
+  REG_A = 'reg_a',
+  REG_CF = 'reg_cf',
+  RULE_144 = 'rule_144',
+  RULE_144A = 'rule_144a',
+  MIFID_II = 'mifid_ii',
+  SFA = 'sfa',
+  FATF = 'fatf',
+  MICA = 'mica',
+  FINCEN = 'fincen',
+  GDPR = 'gdpr',
+  CCPA = 'ccpa',
+}
+
+export interface LegalEntity {
+  name: string;
+  type: 'issuer' | 'custodian' | 'law_firm' | 'auditor' | 'investor' | 'agent' | 'regulator';
+  confidence: number;
+}
+
+export interface RegulationReference {
+  regulation: RegulationType;
+  section?: string;
+  confidence: number;
+}
+
+export interface LegalClause {
+  clauseType: 'lockup' | 'transfer_restriction' | 'accreditation' | 'disclosure' | 'liability' | 'termination' | 'governing_law';
+  summary: string;
+  confidence: number;
+}
+
+export interface LegalDocumentAnalysis {
+  documentType: LegalDocumentType;
+  documentTypeConfidence: number;
+  entities: LegalEntity[];
+  regulations: RegulationReference[];
+  keyClauses: LegalClause[];
+  jurisdictions: string[];
+  structuredSummary: LegalDocumentStructuredSummary;
+}
+
+export interface LegalDocumentStructuredSummary {
+  documentType: string;
+  primaryJurisdiction: string;
+  applicableRegulations: string[];
+  keyEntities: string[];
+  restrictionTypes: string[];
+  investorRequirements: string[];
+  lockupProvisions: string[];
+  transferRestrictions: string[];
+  disclosureRequirements: string[];
+}
+
+export interface LegalBertRequest {
+  documentText: string;
+}
+
+export interface LegalBertResponse {
+  documentType: LegalDocumentType;
+  documentTypeConfidence: number;
+  entities: LegalEntity[];
+  regulations: RegulationReference[];
+  keyClauses: LegalClause[];
+  jurisdictions: string[];
+  structuredSummary: LegalDocumentStructuredSummary;
+}
+
+export interface EnhancedComplianceRequest extends ComplianceCheckRequest {
+  documentText?: string;
+  useLegalBert?: boolean;
+}
+
+export interface EnhancedComplianceResponse extends ComplianceCheckResponse {
+  legalBertAnalysis?: LegalDocumentAnalysis;
+  pipelineUsed: '2-model' | 'mistral-only' | 'fallback';
+}

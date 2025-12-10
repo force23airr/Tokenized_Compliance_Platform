@@ -8,7 +8,9 @@
       "Bash(cat:*)",
       "Bash(npx prisma:*)",
       "Bash(npx tsc:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(npm run lint)",
+      "Bash(git add:*)"
     ]
   }
 }

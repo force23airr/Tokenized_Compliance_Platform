@@ -5,7 +5,11 @@ import { ApiError } from '../middleware/errorHandler';
 import { deployTokenContract } from '../services/blockchain';
 import { logger } from '../utils/logger';
 import { validateTokenCompliance } from '../services/aiComplianceEnhanced';
-import { storeConflictEvent } from '../services/preflightCheck';
+import {
+  storeConflictEvent,
+  storeComplianceDecision,
+  getComplianceAuditTrail,
+} from '../services/preflightCheck';
 
 const prisma = new PrismaClient();
 
@@ -111,7 +115,32 @@ export const createToken = async (
       );
     }
 
-    // Create token record in database
+    // ===== MERGE AI COMBINED REQUIREMENTS INTO COMPLIANCE RULES =====
+    // This embeds the AI-resolved compliance requirements on-chain
+    const mergedComplianceRules = {
+      ...complianceRules,
+      // AI-resolved requirements (override original rules with stricter AI recommendations)
+      ai_combined_requirements: aiComplianceResult.combinedRequirements,
+      // Track ruleset version used for this token
+      ruleset_version: aiComplianceResult.rulesetVersion,
+      // Flag if manual review is required
+      requires_manual_review: aiComplianceResult.requiresManualReview,
+      // Apply AI-recommended settings
+      accredited_only: aiComplianceResult.combinedRequirements.accreditedOnly,
+      max_investors: Math.min(
+        complianceRules.max_investors,
+        aiComplianceResult.combinedRequirements.maxInvestors
+      ),
+      lockup_period_days: Math.max(
+        complianceRules.lockup_period_days,
+        aiComplianceResult.combinedRequirements.lockupDays
+      ),
+      min_investment: aiComplianceResult.combinedRequirements.minInvestment,
+      required_disclosures: aiComplianceResult.combinedRequirements.requiredDisclosures,
+      transfer_restrictions: aiComplianceResult.combinedRequirements.transferRestrictions,
+    };
+
+    // Create token record in database with merged compliance rules
     const token = await prisma.token.create({
       data: {
         name: validatedData.token_config.name,
@@ -122,36 +151,60 @@ export const createToken = async (
         blockchain: validatedData.token_config.blockchain.toLowerCase(),
         status: 'pending',
         assetDetails: validatedData.asset_details as any,
-        complianceRules: (validatedData.compliance_rules || {}) as any,
+        complianceRules: mergedComplianceRules as any,
         custodian: validatedData.custody?.custodian,
         custodianVaultId: validatedData.custody?.vault_id,
-        issuerId: req.apiKey?.userId || null, // Null if no user associated with API key
+        issuerId: req.apiKey?.userId || null,
       },
     });
 
-    // Trigger async deployment (background job)
-    deployTokenContract(token.id).catch((error) => {
-      logger.error('Token deployment failed', { tokenId: token.id, error });
-    });
+    // ===== STORE COMPLIANCE DECISION FOR FULL AUDIT TRAIL =====
+    await storeComplianceDecision(
+      token.id,
+      'pre_validation',
+      aiComplianceResult.approved,
+      aiComplianceResult.reason,
+      aiComplianceResult.confidence,
+      aiComplianceResult.requiresManualReview,
+      aiComplianceResult.isFallback,
+      aiComplianceResult.combinedRequirements,
+      aiComplianceResult.rulesetVersion,
+      {
+        assetType: validatedData.asset_type,
+        jurisdictions,
+        originalComplianceRules: complianceRules,
+      }
+    );
 
-    // Store conflict events for audit trail
+    // ===== STORE ENHANCED CONFLICT EVENTS =====
     if (aiComplianceResult.conflicts.length > 0) {
       for (const conflict of aiComplianceResult.conflicts) {
         const resolution = aiComplianceResult.resolutions.find(
           (r) => r.conflictType === conflict.type
         );
-        await storeConflictEvent(
-          token.id,
-          conflict.type,
-          conflict.jurisdictions[0] || 'unknown',
-          conflict.jurisdictions[1] || 'unknown',
-          conflict.ruleA,
-          conflict.ruleB,
-          resolution?.resolvedRequirement || 'unresolved',
-          aiComplianceResult.rulesetVersion
-        );
+        await storeConflictEvent({
+          tokenId: token.id,
+          conflictType: conflict.type,
+          jurisdictionA: conflict.jurisdictions[0] || 'unknown',
+          jurisdictionB: conflict.jurisdictions[1] || 'unknown',
+          description: conflict.description,
+          ruleA: conflict.ruleA,
+          ruleB: conflict.ruleB,
+          resolution: resolution?.resolvedRequirement || 'unresolved',
+          resolutionStrategy: resolution?.strategy,
+          resolutionRationale: resolution?.rationale,
+          aiConfidence: aiComplianceResult.confidence,
+          rulesetVersion: aiComplianceResult.rulesetVersion,
+          isFallback: aiComplianceResult.isFallback,
+          requiresReview: aiComplianceResult.requiresManualReview,
+        });
       }
     }
+
+    // Trigger async deployment (background job)
+    deployTokenContract(token.id).catch((error) => {
+      logger.error('Token deployment failed', { tokenId: token.id, error });
+    });
 
     // Log audit trail
     await prisma.auditLog.create({
@@ -394,6 +447,98 @@ export const getTokenHolders = async (
         classification: entry.investor.classification,
         jurisdiction: entry.investor.jurisdiction,
         whitelisted_at: entry.approvedAt,
+      })),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ============= Compliance Audit Endpoint =============
+
+export const getTokenComplianceAudit = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { id } = req.params;
+
+    // Get token with compliance rules
+    const token = await prisma.token.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        name: true,
+        symbol: true,
+        assetType: true,
+        status: true,
+        complianceRules: true,
+        createdAt: true,
+        deployedAt: true,
+      },
+    });
+
+    if (!token) {
+      throw new ApiError(404, 'TOKEN_NOT_FOUND', 'Token not found');
+    }
+
+    // Get full compliance audit trail
+    const auditTrail = await getComplianceAuditTrail(id);
+
+    // Format response for frontend dashboard
+    res.json({
+      token_id: token.id,
+      token_name: token.name,
+      token_symbol: token.symbol,
+      asset_type: token.assetType,
+      status: token.status,
+      created_at: token.createdAt,
+      deployed_at: token.deployedAt,
+
+      // Current compliance rules (with AI-merged requirements)
+      compliance_rules: token.complianceRules,
+
+      // AI compliance summary
+      compliance_summary: {
+        total_conflicts: auditTrail.summary.totalConflicts,
+        resolved_conflicts: auditTrail.summary.resolvedConflicts,
+        unresolved_conflicts: auditTrail.summary.unresolvedConflicts,
+        manual_review_required: auditTrail.summary.manualReviewRequired,
+        ai_confidence: auditTrail.summary.latestConfidence,
+        ruleset_version: auditTrail.summary.latestRulesetVersion,
+      },
+
+      // Conflict events (for dashboard table display)
+      conflict_events: auditTrail.conflictEvents.map((event) => ({
+        id: event.id,
+        conflict_type: event.conflictType,
+        jurisdiction_a: event.jurisdictionA,
+        jurisdiction_b: event.jurisdictionB,
+        description: event.description,
+        rule_a: event.ruleA,
+        rule_b: event.ruleB,
+        resolution: event.resolution,
+        resolution_strategy: event.resolutionStrategy,
+        resolution_rationale: event.resolutionRationale,
+        ai_confidence: event.aiConfidence,
+        is_fallback: event.isFallback,
+        requires_review: event.requiresReview,
+        resolved_at: event.resolvedAt,
+      })),
+
+      // Compliance decisions timeline
+      compliance_decisions: auditTrail.complianceDecisions.map((decision) => ({
+        id: decision.id,
+        decision_type: decision.decisionType,
+        approved: decision.approved,
+        reason: decision.reason,
+        ai_confidence: decision.aiConfidence,
+        requires_manual_review: decision.requiresManualReview,
+        is_fallback: decision.isFallback,
+        combined_requirements: decision.combinedRequirements,
+        ruleset_version: decision.rulesetVersion,
+        created_at: decision.createdAt,
       })),
     });
   } catch (error) {

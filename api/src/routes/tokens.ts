@@ -38,4 +38,7 @@ router.post(
 // GET /v1/tokens/:id/holders
 router.get('/:id/holders', tokensController.getTokenHolders);
 
+// GET /v1/tokens/:id/compliance-audit - Full compliance audit trail
+router.get('/:id/compliance-audit', tokensController.getTokenComplianceAudit);
+
 export default router;

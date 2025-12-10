@@ -38,6 +38,13 @@ export const settlementQueue = new Queue('settlement', connection ? { connection
 export const reportingQueue = new Queue('reporting', connection ? { connection } : {});
 export const notificationQueue = new Queue('notification', connection ? { connection } : {});
 
+// New compliance queues
+export const sanctionsCheckQueue = new Queue('sanctions-check', connection ? { connection } : {});
+export const attestationVerifyQueue = new Queue('attestation-verify', connection ? { connection } : {});
+export const travelRuleQueue = new Queue('travel-rule', connection ? { connection } : {});
+export const onChainSyncQueue = new Queue('on-chain-sync', connection ? { connection } : {});
+export const complianceCaseQueue = new Queue('compliance-case', connection ? { connection } : {});
+
 /**
  * Add job to deployment queue
  */
@@ -139,15 +146,157 @@ export async function sendNotification(
 }
 
 /**
+ * Schedule sanctions check with multi-provider fallback
+ */
+export async function scheduleSanctionsCheck(
+  investorId: string,
+  walletAddress: string,
+  jurisdiction: string,
+  providers: string[] = ['chainalysis', 'elliptic', 'ofac']
+) {
+  const job = await sanctionsCheckQueue.add(
+    'run-sanctions-check',
+    { investorId, walletAddress, jurisdiction, providers },
+    {
+      attempts: 3,
+      backoff: {
+        type: 'exponential',
+        delay: 3000,
+      },
+      removeOnComplete: 200,
+      removeOnFail: 500,
+    }
+  );
+
+  logger.info('Sanctions check job scheduled', { investorId, jobId: job.id });
+  return job;
+}
+
+/**
+ * Schedule attestation verification
+ */
+export async function scheduleAttestationVerification(
+  attestationId: string,
+  verifySignature: boolean = true
+) {
+  const job = await attestationVerifyQueue.add(
+    'verify-attestation',
+    { attestationId, verifySignature },
+    {
+      attempts: 2,
+      backoff: {
+        type: 'fixed',
+        delay: 2000,
+      },
+      removeOnComplete: 100,
+    }
+  );
+
+  logger.info('Attestation verification job scheduled', { attestationId, jobId: job.id });
+  return job;
+}
+
+/**
+ * Schedule travel rule processing
+ */
+export async function scheduleTravelRuleProcessing(
+  transferId: string,
+  transferValueUSD: number
+) {
+  const job = await travelRuleQueue.add(
+    'process-travel-rule',
+    { transferId, transferValueUSD },
+    {
+      attempts: 2,
+      backoff: {
+        type: 'fixed',
+        delay: 2000,
+      },
+      removeOnComplete: 200,
+    }
+  );
+
+  logger.info('Travel rule job scheduled', { transferId, jobId: job.id });
+  return job;
+}
+
+/**
+ * Schedule on-chain sync
+ */
+export async function scheduleOnChainSync(
+  entityType: string,
+  entityId: string,
+  contractAddress: string,
+  chainId: number,
+  dataHash: string
+) {
+  const job = await onChainSyncQueue.add(
+    'sync-to-chain',
+    { entityType, entityId, contractAddress, chainId, dataHash },
+    {
+      attempts: 5,
+      backoff: {
+        type: 'exponential',
+        delay: 5000,
+      },
+      removeOnComplete: 100,
+      removeOnFail: 200,
+    }
+  );
+
+  logger.info('On-chain sync job scheduled', { entityType, entityId, jobId: job.id });
+  return job;
+}
+
+/**
+ * Schedule compliance case processing
+ */
+export async function scheduleComplianceCaseProcessing(
+  caseId: string,
+  action: 'create' | 'update' | 'review' | 'close'
+) {
+  const job = await complianceCaseQueue.add(
+    `compliance-case-${action}`,
+    { caseId, action },
+    {
+      attempts: 2,
+      backoff: {
+        type: 'fixed',
+        delay: 1000,
+      },
+    }
+  );
+
+  logger.info('Compliance case job scheduled', { caseId, action, jobId: job.id });
+  return job;
+}
+
+/**
  * Get queue statistics
  */
 export async function getQueueStats() {
-  const [deployment, compliance, settlement, reporting, notification] = await Promise.all([
+  const [
+    deployment,
+    compliance,
+    settlement,
+    reporting,
+    notification,
+    sanctions,
+    attestation,
+    travelRule,
+    onChainSync,
+    complianceCase,
+  ] = await Promise.all([
     tokenDeploymentQueue.getJobCounts(),
     complianceCheckQueue.getJobCounts(),
     settlementQueue.getJobCounts(),
     reportingQueue.getJobCounts(),
     notificationQueue.getJobCounts(),
+    sanctionsCheckQueue.getJobCounts(),
+    attestationVerifyQueue.getJobCounts(),
+    travelRuleQueue.getJobCounts(),
+    onChainSyncQueue.getJobCounts(),
+    complianceCaseQueue.getJobCounts(),
   ]);
 
   return {
@@ -156,6 +305,11 @@ export async function getQueueStats() {
     settlement,
     reporting,
     notification,
+    sanctionsCheck: sanctions,
+    attestationVerify: attestation,
+    travelRule,
+    onChainSync,
+    complianceCase,
   };
 }
 
@@ -169,6 +323,11 @@ export async function cleanupOldJobs() {
     settlementQueue,
     reportingQueue,
     notificationQueue,
+    sanctionsCheckQueue,
+    attestationVerifyQueue,
+    travelRuleQueue,
+    onChainSyncQueue,
+    complianceCaseQueue,
   ];
 
   for (const queue of queues) {

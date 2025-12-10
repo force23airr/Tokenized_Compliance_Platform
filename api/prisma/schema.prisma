@@ -35,8 +35,9 @@ model User {
   role          String   @default("user") // user, admin, compliance_officer
   createdAt     DateTime @default(now())
 
-  apiKeys       ApiKey[]
-  tokens        Token[]
+  apiKeys          ApiKey[]
+  tokens           Token[]
+  issuerCompliance IssuerCompliance?
 }
 
 // ============= Tokens (Assets) =============
@@ -74,14 +75,22 @@ model Token {
   issuerId          String?
   issuer            User?     @relation(fields: [issuerId], references: [id])
 
+  // Compliance Versioning (for on-chain traceability)
+  rulesetVersion    String?
+  complianceTraceId String?
+
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
   // Relations
-  investors         InvestorWhitelist[]
-  transfers         Transfer[]
-  distributions     Distribution[]
-  conflictEvents    ConflictEvent[]
+  investors            InvestorWhitelist[]
+  transfers            Transfer[]
+  distributions        Distribution[]
+  conflictEvents       ConflictEvent[]
+  complianceDecisions  ComplianceDecision[]
+  assetAttestations    AssetAttestation[]
+  transferRestriction  TransferRestriction?
+  holderLockups        HolderLockup[]
 
   @@index([contractAddress])
   @@index([issuerId])
@@ -126,8 +135,11 @@ model Investor {
   updatedAt         DateTime @updatedAt
 
   // Relations
-  whitelistEntries  InvestorWhitelist[]
-  transfers         Transfer[]
+  whitelistEntries    InvestorWhitelist[]
+  transfers           Transfer[]
+  investorCompliance  InvestorCompliance?
+  sanctionsChecks     SanctionsCheck[]
+  holderLockups       HolderLockup[]
 
   @@index([walletAddress])
   @@index([email])
@@ -208,6 +220,9 @@ model Transfer {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
+  // Relations
+  travelRuleData    TravelRuleData?
+
   @@index([tokenId])
   @@index([status])
   @@index([txHash])
@@ -268,7 +283,7 @@ model AuditLog {
   @@index([createdAt])
 }
 
-// ============= Conflict Events (AI Compliance) =============
+// ============= Conflict Events (AI Compliance Audit Trail) =============
 
 model ConflictEvent {
   id              String   @id @default(uuid())
@@ -276,19 +291,569 @@ model ConflictEvent {
   tokenId         String
   token           Token    @relation(fields: [tokenId], references: [id])
 
+  // Conflict Details
   conflictType    String   // jurisdiction_conflict, investor_limit_conflict, etc.
   jurisdictionA   String   // First jurisdiction in conflict
   jurisdictionB   String   // Second jurisdiction in conflict
+  description     String?  // Human-readable conflict description
 
   ruleA           String   // Rule from jurisdiction A
   ruleB           String   // Rule from jurisdiction B
 
-  resolution      String   // How the conflict was resolved
+  // Resolution Details
+  resolution           String   // How the conflict was resolved
+  resolutionStrategy   String?  // apply_strictest, jurisdiction_specific, etc.
+  resolutionRationale  String?  // AI's reasoning for the resolution
+
+  // AI Metadata
+  aiConfidence    Float    @default(0)  // AI confidence score (0-1)
   rulesetVersion  String   // Version of regulatory rules used
+  isFallback      Boolean  @default(false)  // Whether fallback logic was used
+  requiresReview  Boolean  @default(false)  // Flagged for manual compliance review
 
   resolvedAt      DateTime @default(now())
 
   @@index([tokenId])
   @@index([conflictType])
   @@index([resolvedAt])
+  @@index([requiresReview])
+}
+
+// ============= Compliance Decision Log (Full AI Audit) =============
+
+model ComplianceDecision {
+  id              String   @id @default(uuid())
+
+  tokenId         String
+  token           Token    @relation(fields: [tokenId], references: [id])
+
+  // Decision Details
+  decisionType    String   // pre_validation, preflight_check, transfer_validation
+  approved        Boolean
+  reason          String?
+
+  // AI Analysis
+  aiConfidence         Float
+  requiresManualReview Boolean  @default(false)
+  isFallback           Boolean  @default(false)
+
+  // Requirements Applied
+  combinedRequirements Json?  // Merged compliance requirements from AI
+
+  // Versioning
+  rulesetVersion  String
+
+  // Metadata
+  requestPayload  Json?   // Original request for audit
+  createdAt       DateTime @default(now())
+
+  @@index([tokenId])
+  @@index([decisionType])
+  @@index([createdAt])
+}
+
+// ============= Compliance Case (Master Ticket System) =============
+
+model ComplianceCase {
+  id              String   @id @default(uuid())
+
+  // Case Type
+  caseType        String   // issuance, transfer, investor_onboarding, periodic_review
+  entityType      String   // token, investor, transfer
+  entityId        String
+
+  // Status
+  status          String   @default("open") // open, in_review, approved, rejected, escalated
+  priority        String   @default("normal") // low, normal, high, urgent
+
+  // Assignment
+  assignedTo      String?  // User ID of reviewer
+  createdBy       String?  // User ID or "system"
+
+  // AI Judgment
+  aiConfidence         Float?
+  requiresManualReview Boolean  @default(false)
+  manualReviewReason   String?
+  reviewedBy           String?
+  reviewedAt           DateTime?
+
+  // Audit Trail
+  notes           Json?    // Array of {author, timestamp, note}
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  closedAt        DateTime?
+
+  // Relations
+  sanctionsChecks     SanctionsCheck[]
+  assetAttestations   AssetAttestation[]
+  travelRuleData      TravelRuleData?
+  investorCompliance  InvestorCompliance?
+  auditLogs           ComplianceAuditLog[]
+
+  @@index([caseType])
+  @@index([status])
+  @@index([entityType, entityId])
+  @@index([assignedTo])
+  @@index([createdAt])
+}
+
+// ============= Investor Compliance (KYC/KYB, Accreditation, Suitability) =============
+
+model InvestorCompliance {
+  id                    String   @id @default(uuid())
+
+  investorId            String   @unique
+  investor              Investor @relation(fields: [investorId], references: [id])
+
+  // KYC/KYB Data
+  kycProvider           String?  // onfido, jumio, sumsub
+  kycDocumentHash       String?  // Hash of KYC docs for on-chain reference
+  kycVerificationLevel  String   @default("basic") // basic, enhanced, institutional
+  kybVerified           Boolean  @default(false)
+  kybDocumentHash       String?
+
+  // FATF Travel Rule
+  travelRuleCompliant   Boolean  @default(false)
+  originatorInfo        Json?    // Name, account, address, etc.
+  beneficiaryInfo       Json?    // For outbound transfers
+
+  // Accreditation (Reg D/S)
+  accreditationType     String?  // income, net_worth, professional, entity
+  accreditationProofHash String?
+  accreditationVerifiedAt DateTime?
+  accreditationExpiresAt DateTime?
+  verificationMethod    String?  // self_cert, third_party, issuer_verified
+
+  // Suitability
+  riskTolerance         String?  // conservative, moderate, aggressive
+  investmentExperience  String?  // none, limited, moderate, extensive
+  investmentObjective   String?  // income, growth, preservation
+  suitabilityScore      Float?
+  suitabilityAssessedAt DateTime?
+
+  // AI Confidence & Review
+  aiConfidence          Float?
+  requiresManualReview  Boolean  @default(false)
+  manualReviewReason    String?
+  reviewedBy            String?
+  reviewedAt            DateTime?
+
+  // AI Model Accountability
+  aiModelId             String?  // e.g., "mistral-7b-instruct-v0.2"
+  aiModelVersion        String?  // e.g., "together-ai-1.0.3"
+  rulesetVersion        String?  // Regulatory ruleset version used
+
+  // Attestation Hash for On-Chain
+  complianceAttestationHash String?
+  lastAttestationAt     DateTime?
+
+  // Link to Case
+  complianceCaseId      String?  @unique
+  complianceCase        ComplianceCase? @relation(fields: [complianceCaseId], references: [id])
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([investorId])
+  @@index([accreditationExpiresAt])
+}
+
+// ============= Sanctions/AML Tracking =============
+
+model SanctionsCheck {
+  id              String   @id @default(uuid())
+
+  investorId      String
+  investor        Investor @relation(fields: [investorId], references: [id])
+
+  // Provider Details
+  provider        String   // chainalysis, elliptic, ofac_direct
+  listVersion     String   // Version of sanctions list used
+  checkType       String   // aml, pep, sanctions, adverse_media
+
+  // Results
+  passed          Boolean
+  riskScore       Float?
+  flags           Json?    // Array of flag types
+  rawResponse     Json?    // Full provider response (encrypted)
+
+  // Jurisdiction for Multi-Region Reporting
+  jurisdiction    String   // US, SG, EU, etc.
+
+  // AI Confidence & Review
+  aiConfidence         Float?
+  requiresManualReview Boolean  @default(false)
+  manualReviewReason   String?
+
+  // AI Model Accountability
+  aiModelId            String?  // Model used for risk scoring
+  aiModelVersion       String?
+  sanctionsListVersion String?  // OFAC list version, e.g., "2025-01-15"
+
+  // On-Chain Audit
+  checkHash       String   @unique  // keccak256 of key fields
+  recordedOnChain Boolean  @default(false)
+  onChainTxHash   String?
+
+  // Timestamps
+  checkedAt       DateTime @default(now())
+  expiresAt       DateTime  // Checks expire after configured period
+
+  // Link to Case
+  complianceCaseId String?
+  complianceCase   ComplianceCase? @relation(fields: [complianceCaseId], references: [id])
+
+  @@index([investorId])
+  @@index([checkedAt])
+  @@index([checkHash])
+  @@index([complianceCaseId])
+  @@index([jurisdiction])
+}
+
+// ============= Issuer Compliance (Securities Law, Fund Regulations) =============
+
+model IssuerCompliance {
+  id                  String   @id @default(uuid())
+
+  issuerId            String   @unique
+  issuer              User     @relation(fields: [issuerId], references: [id])
+
+  // Securities Law Compliance
+  securitiesExemption String?  // reg_d_506b, reg_d_506c, reg_s, reg_a
+  formDFilingStatus   String?  // pending, filed, not_required
+  formDFilingDate     DateTime?
+  formDConfirmation   String?
+
+  // Fund Regulations
+  fundType            String?  // 3c1, 3c7, private_fund, none
+  investmentAdviser   Boolean  @default(false)
+  adviserRegistration String?
+
+  // MAS SFA (Singapore)
+  sfaExemption        String?  // section_275, section_305
+  cmsLicenseNumber    String?
+
+  // Blue-Sky Laws
+  blueSkyFilings      Json?    // {state: filing_status}
+  blueSkyExemptions   Json?    // {state: exemption_type}
+
+  // Compliance Officer
+  complianceOfficer   String?
+  lastAuditDate       DateTime?
+  auditReportHash     String?
+
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([issuerId])
+}
+
+// ============= Asset Attestations (Proof of Existence, Valuation) =============
+
+model AssetAttestation {
+  id                String   @id @default(uuid())
+
+  tokenId           String
+  token             Token    @relation(fields: [tokenId], references: [id])
+
+  // Attestation Type
+  attestationType   String   // proof_of_existence, ownership, valuation, reserve
+
+  // Proof of Existence
+  assetIdentifier   String?  // CUSIP, ISIN, property address hash
+  existenceProof    String?  // Document hash
+
+  // Ownership Verification
+  ownershipDocHash  String?
+  titleChainHash    String?
+  lienStatus        String?  // clear, encumbered, unknown
+
+  // Valuation
+  valuationProvider String?  // Appraiser name/firm
+  valuationMethod   String?  // market, income, cost
+  valuationAmount   String?  // BigNumber
+  valuationCurrency String?
+  valuationDate     DateTime?
+  valuationDocHash  String?
+
+  // Oracle Integrity (for price feeds)
+  oracleProvider    String?  // chainlink, pyth, custom
+  oracleAddress     String?
+  lastOracleUpdate  DateTime?
+  oracleDeviation   Float?   // Max acceptable deviation %
+
+  // Digital Signature Verification
+  issuedBy          String   // Custodian/auditor address
+  attestedBy        String?  // Signer name/entity
+  signature         String?  // Digital signature (hex)
+  signatureAlgorithm String? // ECDSA, RSA, etc.
+  publicKeyHash     String?  // For signature verification
+
+  // On-Chain Reference
+  attestationHash   String   @unique
+  onChainTxHash     String?
+  onChainRegistry   String?  // Contract address
+
+  // Validity
+  issuedAt          DateTime @default(now())
+  expiresAt         DateTime
+  revoked           Boolean  @default(false)
+  revokedAt         DateTime?
+  revokedReason     String?
+
+  // Link to Case
+  complianceCaseId  String?
+  complianceCase    ComplianceCase? @relation(fields: [complianceCaseId], references: [id])
+
+  @@index([tokenId])
+  @@index([attestationHash])
+  @@index([expiresAt])
+  @@index([complianceCaseId])
+}
+
+// ============= Transfer Restrictions (Rule 144, Reg S, 144A) =============
+
+model TransferRestriction {
+  id                  String   @id @default(uuid())
+
+  tokenId             String   @unique
+  token               Token    @relation(fields: [tokenId], references: [id])
+
+  // General Lockups
+  globalLockupEnd     DateTime?
+  initialOfferingEnd  DateTime?
+
+  // Rule 144 / Reg S
+  rule144Applicable   Boolean  @default(false)
+  rule144HoldingDays  Int?
+  regSApplicable      Boolean  @default(false)
+  regSDistributionEnd DateTime?
+
+  // 144A Requirements
+  rule144AOnly        Boolean  @default(false)
+  qibRequired         Boolean  @default(false)
+
+  // ATS/MTF Requirements
+  atsRequired         Boolean  @default(false)
+  approvedATS         Json?    // List of approved trading systems
+  mtfRequired         Boolean  @default(false)
+  approvedMTF         Json?
+
+  // Volume Restrictions
+  maxDailyVolume      String?  // BigNumber
+  maxWeeklyVolume     String?
+  volumeResetPeriod   String?  // daily, weekly, monthly
+
+  // Jurisdiction Restrictions
+  blockedJurisdictions Json?   // Countries where transfer prohibited
+
+  // Jurisdiction for Multi-Region Reporting
+  primaryJurisdiction String?  // US, SG, EU, etc.
+  applicableRegimes   Json?    // Array of regimes that apply
+
+  // On-Chain Sync
+  onChainRuleHash     String?
+  lastSyncedAt        DateTime?
+
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([tokenId])
+}
+
+// ============= Per-Holder Lockups =============
+
+model HolderLockup {
+  id              String   @id @default(uuid())
+
+  tokenId         String
+  token           Token    @relation(fields: [tokenId], references: [id])
+
+  investorId      String
+  investor        Investor @relation(fields: [investorId], references: [id])
+
+  // Lockup Details
+  unlockTimestamp DateTime
+  lockupType      String   // initial_offering, rule_144, reg_s, contractual, vesting
+  lockupReason    String?
+
+  // Vesting Schedule (if applicable)
+  vestingSchedule Json?    // {cliff: days, periods: [], amounts: []}
+
+  // On-Chain Tracking
+  onChainSynced   Boolean  @default(false)
+  syncTxHash      String?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([tokenId, investorId])
+  @@index([tokenId])
+  @@index([investorId])
+  @@index([unlockTimestamp])
+}
+
+// ============= Travel Rule Data (FATF >$1K) =============
+
+model TravelRuleData {
+  id                      String   @id @default(uuid())
+
+  transferId              String   @unique
+  transfer                Transfer @relation(fields: [transferId], references: [id])
+
+  // Threshold Check
+  transferValueUSD        Float
+  thresholdTriggered      Boolean  // >$1000 USD for FATF
+
+  // Originator Info (Sending VASP)
+  originatorName          String?
+  originatorAccount       String?  // Wallet or account ID
+  originatorAddress       Json?    // Physical address
+  originatorVASP          String?  // VASP identifier
+
+  // Beneficiary Info (Receiving VASP)
+  beneficiaryName         String?
+  beneficiaryAccount      String?
+  beneficiaryVASP         String?
+
+  // Jurisdiction for Multi-Region Reporting
+  originatorJurisdiction  String?  // From jurisdiction
+  beneficiaryJurisdiction String?  // To jurisdiction
+  applicableRegime        String?  // FATF, MiCA, FinCEN, etc.
+
+  // Compliance Status
+  complianceStatus        String   @default("pending") // pending, compliant, non_compliant, exempt
+  exemptionReason         String?
+
+  // MiCA Specific
+  micaCompliant           Boolean  @default(false)
+  micaReportId            String?
+
+  // FinCEN Specific
+  fincenReportable        Boolean  @default(false)
+  sarFiled                Boolean  @default(false)
+  sarFilingId             String?
+
+  // Link to Case
+  complianceCaseId        String?  @unique
+  complianceCase          ComplianceCase? @relation(fields: [complianceCaseId], references: [id])
+
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  @@index([transferId])
+  @@index([complianceStatus])
+}
+
+// ============= Governance Compliance (SOC 2, ISO 27001) =============
+
+model GovernanceCompliance {
+  id                  String   @id @default(uuid())
+
+  // Entity Reference
+  entityType          String   // platform, issuer, custodian
+  entityId            String?
+
+  // SOC 2 Compliance
+  soc2Type            String?  // type_1, type_2
+  soc2ReportDate      DateTime?
+  soc2ReportHash      String?
+  soc2Auditor         String?
+  soc2ExpiresAt       DateTime?
+
+  // ISO 27001
+  iso27001Certified   Boolean  @default(false)
+  iso27001CertDate    DateTime?
+  iso27001CertHash    String?
+  iso27001Registrar   String?
+  iso27001ExpiresAt   DateTime?
+
+  // Custodian Audit
+  custodianName       String?
+  custodianAuditDate  DateTime?
+  custodianAuditHash  String?
+  custodianRegulator  String?
+
+  // Broker-Dealer Audit
+  brokerDealerId      String?
+  brokerDealerAuditDate DateTime?
+  brokerDealerFINRA   Boolean  @default(false)
+  brokerDealerSEC     Boolean  @default(false)
+
+  // Data Residency (GDPR/CCPA Traceability)
+  dataResidency       String?  // EU, US, SG - where PII is stored
+  dataResidencyRegion String?  // Specific region, e.g., "eu-west-1", "us-east-1"
+  gdprCompliant       Boolean  @default(false)
+  ccpaCompliant       Boolean  @default(false)
+  dataRetentionPolicy String?  // e.g., "7_years", "5_years"
+
+  // General Audit Trail
+  auditDocuments      Json?    // Array of {type, hash, date, expiry}
+
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([entityType, entityId])
+  @@index([soc2ExpiresAt])
+  @@index([iso27001ExpiresAt])
+}
+
+// ============= On-Chain Compliance Sync =============
+
+model OnChainComplianceSync {
+  id              String   @id @default(uuid())
+
+  entityType      String   // investor, token, attestation, sanctions_check
+  entityId        String
+
+  contractAddress String
+  chainId         Int
+
+  dataHash        String   // Hash of data synced
+  txHash          String?
+  blockNumber     Int?
+
+  syncStatus      String   @default("pending") // pending, confirmed, failed
+  syncAttempts    Int      @default(0)
+  lastAttemptAt   DateTime?
+  errorMessage    String?
+
+  createdAt       DateTime @default(now())
+  confirmedAt     DateTime?
+
+  @@index([entityType, entityId])
+  @@index([syncStatus])
+  @@index([txHash])
+}
+
+// ============= Immutable Compliance Audit Log (Forensic Trail) =============
+
+model ComplianceAuditLog {
+  id                String   @id @default(uuid())
+
+  complianceCaseId  String?
+  complianceCase    ComplianceCase? @relation(fields: [complianceCaseId], references: [id])
+
+  // Actor: Who Made the Change
+  actor             String   // AI, human_reviewer, system, api_key_id
+  actorType         String   // ai, human, system
+
+  // Action: What Happened
+  action            String   // status_change, ai_decision, manual_override, review_assigned, escalation
+  previousState     Json?    // State before change
+  newState          Json?    // State after change
+  details           Json?    // Additional context
+
+  // AI Accountability
+  aiModelId         String?  // e.g., "mistral-7b-v0.2"
+  aiModelVersion    String?  // e.g., "1.0.3"
+  rulesetVersion    String?  // Regulatory ruleset version
+
+  timestamp         DateTime @default(now())
+
+  @@index([complianceCaseId])
+  @@index([actor])
+  @@index([action])
+  @@index([timestamp])
 }

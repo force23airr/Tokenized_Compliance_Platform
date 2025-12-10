@@ -1,7 +1,14 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python -m uvicorn:*)"
+      "Bash(python -m uvicorn:*)",
+      "Bash(powershell -Command:*)",
+      "Bash(npx prisma generate:*)",
+      "Bash(tree:*)",
+      "Bash(cat:*)",
+      "Bash(npx prisma:*)",
+      "Bash(npx tsc:*)",
+      "Bash(curl:*)"
     ]
   }
 }

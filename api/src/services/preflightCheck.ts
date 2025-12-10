@@ -489,33 +489,149 @@ export async function getPreflightStatus(tokenId: string): Promise<{
   };
 }
 
+// ============= Audit Trail Storage =============
+
 /**
- * Store conflict event for audit trail
+ * Enhanced conflict event data for full audit trail
+ */
+export interface EnhancedConflictData {
+  tokenId: string;
+  conflictType: string;
+  jurisdictionA: string;
+  jurisdictionB: string;
+  description?: string;
+  ruleA: string;
+  ruleB: string;
+  resolution: string;
+  resolutionStrategy?: string;
+  resolutionRationale?: string;
+  aiConfidence: number;
+  rulesetVersion: string;
+  isFallback: boolean;
+  requiresReview: boolean;
+}
+
+/**
+ * Store conflict event for audit trail (enhanced version)
  */
 export async function storeConflictEvent(
-  tokenId: string,
-  conflictType: ConflictType,
-  jurisdictionA: string,
-  jurisdictionB: string,
-  ruleA: string,
-  ruleB: string,
-  resolution: string,
-  rulesetVersion: string
+  data: EnhancedConflictData
 ): Promise<void> {
   try {
     await prisma.conflictEvent.create({
       data: {
-        tokenId,
-        conflictType,
-        jurisdictionA,
-        jurisdictionB,
-        ruleA,
-        ruleB,
-        resolution,
-        rulesetVersion,
+        tokenId: data.tokenId,
+        conflictType: data.conflictType,
+        jurisdictionA: data.jurisdictionA,
+        jurisdictionB: data.jurisdictionB,
+        description: data.description,
+        ruleA: data.ruleA,
+        ruleB: data.ruleB,
+        resolution: data.resolution,
+        resolutionStrategy: data.resolutionStrategy,
+        resolutionRationale: data.resolutionRationale,
+        aiConfidence: data.aiConfidence,
+        rulesetVersion: data.rulesetVersion,
+        isFallback: data.isFallback,
+        requiresReview: data.requiresReview,
       },
     });
+    logger.info('Stored conflict event', {
+      tokenId: data.tokenId,
+      conflictType: data.conflictType,
+      aiConfidence: data.aiConfidence,
+    });
   } catch (error) {
-    logger.error('Failed to store conflict event', { tokenId, error });
+    logger.error('Failed to store conflict event', { tokenId: data.tokenId, error });
   }
+}
+
+/**
+ * Store full compliance decision for audit trail
+ */
+export async function storeComplianceDecision(
+  tokenId: string,
+  decisionType: 'pre_validation' | 'preflight_check' | 'transfer_validation',
+  approved: boolean,
+  reason: string | undefined,
+  aiConfidence: number,
+  requiresManualReview: boolean,
+  isFallback: boolean,
+  combinedRequirements: any,
+  rulesetVersion: string,
+  requestPayload?: any
+): Promise<string> {
+  try {
+    const decision = await prisma.complianceDecision.create({
+      data: {
+        tokenId,
+        decisionType,
+        approved,
+        reason,
+        aiConfidence,
+        requiresManualReview,
+        isFallback,
+        combinedRequirements,
+        rulesetVersion,
+        requestPayload,
+      },
+    });
+    logger.info('Stored compliance decision', {
+      tokenId,
+      decisionType,
+      approved,
+      aiConfidence,
+      decisionId: decision.id,
+    });
+    return decision.id;
+  } catch (error) {
+    logger.error('Failed to store compliance decision', { tokenId, error });
+    throw error;
+  }
+}
+
+/**
+ * Get compliance audit trail for a token
+ */
+export async function getComplianceAuditTrail(tokenId: string): Promise<{
+  conflictEvents: any[];
+  complianceDecisions: any[];
+  summary: {
+    totalConflicts: number;
+    resolvedConflicts: number;
+    unresolvedConflicts: number;
+    manualReviewRequired: boolean;
+    latestConfidence: number;
+    latestRulesetVersion: string;
+  };
+}> {
+  const [conflictEvents, complianceDecisions] = await Promise.all([
+    prisma.conflictEvent.findMany({
+      where: { tokenId },
+      orderBy: { resolvedAt: 'desc' },
+    }),
+    prisma.complianceDecision.findMany({
+      where: { tokenId },
+      orderBy: { createdAt: 'desc' },
+    }),
+  ]);
+
+  const unresolvedConflicts = conflictEvents.filter(
+    (e) => !e.resolution || e.requiresReview
+  );
+  const latestDecision = complianceDecisions[0];
+
+  return {
+    conflictEvents,
+    complianceDecisions,
+    summary: {
+      totalConflicts: conflictEvents.length,
+      resolvedConflicts: conflictEvents.length - unresolvedConflicts.length,
+      unresolvedConflicts: unresolvedConflicts.length,
+      manualReviewRequired: conflictEvents.some((e) => e.requiresReview) ||
+        complianceDecisions.some((d) => d.requiresManualReview),
+      latestConfidence: latestDecision?.aiConfidence || 0,
+      latestRulesetVersion: latestDecision?.rulesetVersion || 'unknown',
+    },
+  };
 }

@@ -5,6 +5,7 @@ import tokensRouter from './tokens';
 import investorsRouter from './investors';
 import transfersRouter from './transfers';
 import sandboxRouter from './sandbox';
+import complianceRouter from './compliance';
 
 const router = Router();
 
@@ -17,5 +18,6 @@ router.use('/tokens', tokensRouter);
 router.use('/investors', investorsRouter);
 router.use('/transfers', transfersRouter);
 router.use('/sandbox', sandboxRouter);
+router.use('/compliance', complianceRouter);
 
 export default router;

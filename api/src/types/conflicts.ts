@@ -177,3 +177,217 @@ export const AI_CONFIDENCE_THRESHOLD = 0.7;
 export const CACHE_TTL_RULES = 3600;        // 1 hour
 export const CACHE_TTL_CONFLICTS = 86400;    // 24 hours
 export const FALLBACK_CACHE_TTL = 86400;     // 24 hours for fallback
+
+// ============= NEW: Compliance Case Types =============
+
+export enum ComplianceCaseType {
+  ISSUANCE = 'issuance',
+  TRANSFER = 'transfer',
+  INVESTOR_ONBOARDING = 'investor_onboarding',
+  PERIODIC_REVIEW = 'periodic_review',
+}
+
+export enum ComplianceCaseStatus {
+  OPEN = 'open',
+  IN_REVIEW = 'in_review',
+  APPROVED = 'approved',
+  REJECTED = 'rejected',
+  ESCALATED = 'escalated',
+}
+
+export enum CasePriority {
+  LOW = 'low',
+  NORMAL = 'normal',
+  HIGH = 'high',
+  URGENT = 'urgent',
+}
+
+// ============= NEW: Lockup Types =============
+
+export enum LockupType {
+  INITIAL_OFFERING = 'initial_offering',
+  RULE_144 = 'rule_144',
+  REG_S = 'reg_s',
+  CONTRACTUAL = 'contractual',
+  VESTING = 'vesting',
+}
+
+// ============= NEW: Attestation Types =============
+
+export enum AttestationType {
+  PROOF_OF_EXISTENCE = 'proof_of_existence',
+  OWNERSHIP = 'ownership',
+  VALUATION = 'valuation',
+  RESERVE = 'reserve',
+}
+
+// ============= NEW: Travel Rule Types =============
+
+export enum TravelRuleStatus {
+  PENDING = 'pending',
+  COMPLIANT = 'compliant',
+  NON_COMPLIANT = 'non_compliant',
+  EXEMPT = 'exempt',
+}
+
+export enum TravelRuleRegime {
+  FATF = 'fatf',
+  MICA = 'mica',
+  FINCEN = 'fincen',
+  MAS = 'mas',
+}
+
+// ============= NEW: Sanctions/AML Types =============
+
+export enum SanctionsCheckType {
+  AML = 'aml',
+  PEP = 'pep',
+  SANCTIONS = 'sanctions',
+  ADVERSE_MEDIA = 'adverse_media',
+}
+
+export enum SanctionsProvider {
+  CHAINALYSIS = 'chainalysis',
+  ELLIPTIC = 'elliptic',
+  OFAC_DIRECT = 'ofac_direct',
+}
+
+// ============= NEW: Accreditation Types =============
+
+export enum AccreditationType {
+  INCOME = 'income',
+  NET_WORTH = 'net_worth',
+  PROFESSIONAL = 'professional',
+  ENTITY = 'entity',
+}
+
+export enum VerificationMethod {
+  SELF_CERT = 'self_cert',
+  THIRD_PARTY = 'third_party',
+  ISSUER_VERIFIED = 'issuer_verified',
+}
+
+// ============= NEW: Audit Log Types =============
+
+export enum AuditActorType {
+  AI = 'ai',
+  HUMAN = 'human',
+  SYSTEM = 'system',
+}
+
+export enum AuditAction {
+  STATUS_CHANGE = 'status_change',
+  AI_DECISION = 'ai_decision',
+  MANUAL_OVERRIDE = 'manual_override',
+  REVIEW_ASSIGNED = 'review_assigned',
+  ESCALATION = 'escalation',
+}
+
+// ============= NEW: Compliance Interfaces =============
+
+export interface SanctionsCheckResult {
+  passed: boolean;
+  provider: SanctionsProvider;
+  riskScore: number;
+  flags: string[];
+  checkHash: string;
+  jurisdiction: string;
+  aiConfidence?: number;
+  requiresManualReview: boolean;
+  listVersion: string;
+  checkedAt: Date;
+  expiresAt: Date;
+}
+
+export interface AttestationData {
+  tokenId: string;
+  attestationType: AttestationType;
+  assetIdentifier?: string;
+  valuationAmount?: string;
+  valuationCurrency?: string;
+  issuedBy: string;
+  attestedBy?: string;
+  signature?: string;
+  signatureAlgorithm?: string;
+  expiresAt: Date;
+}
+
+export interface TravelRuleDataInput {
+  transferId: string;
+  transferValueUSD: number;
+  originatorName?: string;
+  originatorAccount?: string;
+  originatorVASP?: string;
+  originatorJurisdiction?: string;
+  beneficiaryName?: string;
+  beneficiaryAccount?: string;
+  beneficiaryVASP?: string;
+  beneficiaryJurisdiction?: string;
+}
+
+export interface LockupParams {
+  tokenId: string;
+  investorId: string;
+  unlockTimestamp: Date;
+  lockupType: LockupType;
+  lockupReason?: string;
+  vestingSchedule?: VestingSchedule;
+}
+
+export interface VestingSchedule {
+  cliffDays: number;
+  periods: number[];
+  amounts: string[];
+}
+
+export interface ComplianceCaseInput {
+  caseType: ComplianceCaseType;
+  entityType: string;
+  entityId: string;
+  priority?: CasePriority;
+  createdBy?: string;
+}
+
+export interface ComplianceAuditLogInput {
+  complianceCaseId?: string;
+  actor: string;
+  actorType: AuditActorType;
+  action: AuditAction;
+  previousState?: Record<string, unknown>;
+  newState?: Record<string, unknown>;
+  details?: Record<string, unknown>;
+  aiModelId?: string;
+  aiModelVersion?: string;
+  rulesetVersion?: string;
+}
+
+// ============= NEW: On-Chain Hash Types =============
+
+export interface InvestorComplianceHashInput {
+  investorId: string;
+  kycDocHashes: string[];
+  accreditationType?: string;
+  accreditationExpiry?: Date;
+}
+
+export interface SanctionsCheckHashInput {
+  address: string;
+  provider: string;
+  listVersion: string;
+  timestamp: Date;
+}
+
+export interface AttestationHashInput {
+  assetId: string;
+  custodian: string;
+  valuationAmount: string;
+  timestamp: Date;
+  proofDocHashes: string[];
+}
+
+export interface ComplianceTraceIdInput {
+  tokenId: string;
+  rulesetVersion: number;
+  jurisdictions: string[];
+  timestamp: Date;
+}

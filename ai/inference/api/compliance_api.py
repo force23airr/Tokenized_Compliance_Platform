@@ -49,6 +49,19 @@ from inference.providers.legalbert_client import (
     analyze_document as legalbert_analyze,
     get_structured_context
 )
+
+# Import Regulatory Oracle
+try:
+    from services.regulatory_oracle import (
+        get_oracle,
+        RegulatoryOracle,
+        PendingChange,
+        ChangeStatus
+    )
+    ORACLE_AVAILABLE = True
+except ImportError:
+    ORACLE_AVAILABLE = False
+    logger.warning("Regulatory Oracle not available")
 from inference.prompts import (
     JURISDICTION_CLASSIFICATION,
     ACCREDITATION_ANALYSIS,
@@ -833,7 +846,234 @@ async def get_model_status():
             "provider": "together.ai",
             "purpose": "Compliance reasoning, conflict resolution"
         },
+        "oracle": {
+            "available": ORACLE_AVAILABLE,
+            "purpose": "Regulatory update analysis and granular rule patching"
+        },
         "confidence_threshold": CONFIDENCE_THRESHOLD
+    }
+
+
+# ============== Regulatory Oracle Endpoints ==============
+
+class OracleAnalysisRequest(BaseModel):
+    """Request for Oracle to analyze a regulatory update"""
+    update_text: str
+    jurisdiction: str = "US"
+    source_title: Optional[str] = None
+    source_url: Optional[str] = None
+
+class OracleAnalysisResponse(BaseModel):
+    """Response from Oracle analysis"""
+    status: str
+    change_id: Optional[str] = None
+    summary: Optional[str] = None
+    field_path: Optional[str] = None
+    old_value: Optional[Any] = None
+    new_value: Optional[Any] = None
+    confidence: Optional[float] = None
+    reason: Optional[str] = None
+
+class PendingChangeResponse(BaseModel):
+    """A pending change awaiting review"""
+    id: str
+    created_at: str
+    jurisdiction: str
+    status: str
+    summary: str
+    field_path: str
+    old_value: Any
+    new_value: Any
+    confidence: float
+    reasoning: str
+    source_title: Optional[str] = None
+
+class ApproveChangeRequest(BaseModel):
+    """Request to approve a pending change"""
+    reviewer: str
+    notes: Optional[str] = None
+    apply_immediately: bool = True
+
+class RejectChangeRequest(BaseModel):
+    """Request to reject a pending change"""
+    reviewer: str
+    reason: str
+
+
+@app.post("/oracle/analyze", response_model=OracleAnalysisResponse)
+async def oracle_analyze_update(request: OracleAnalysisRequest):
+    """
+    Submit a regulatory update for Oracle analysis.
+
+    The Oracle will:
+    1. Analyze the text using AI
+    2. Identify specific rule changes needed
+    3. Create a pending change proposal if relevant
+
+    Returns the analysis result with change_id if a proposal was created.
+    """
+    if not ORACLE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Regulatory Oracle not available")
+
+    try:
+        oracle = get_oracle()
+        source_update = {
+            "title": request.source_title or "Manual submission",
+            "url": request.source_url,
+            "submitted_at": datetime.now().isoformat()
+        }
+
+        result = await oracle.process_update(
+            update_text=request.update_text,
+            jurisdiction=request.jurisdiction,
+            source_update=source_update
+        )
+
+        return OracleAnalysisResponse(
+            status=result.get("status", "error"),
+            change_id=result.get("change_id"),
+            summary=result.get("summary"),
+            field_path=result.get("field_path"),
+            old_value=result.get("old_value"),
+            new_value=result.get("new_value"),
+            confidence=result.get("confidence"),
+            reason=result.get("reason")
+        )
+
+    except Exception as e:
+        logger.error(f"Oracle analysis failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/oracle/pending")
+async def get_pending_changes(jurisdiction: Optional[str] = None):
+    """
+    Get all pending change proposals awaiting human review.
+
+    Optionally filter by jurisdiction (US, SG, EU, etc.)
+    """
+    if not ORACLE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Regulatory Oracle not available")
+
+    try:
+        oracle = get_oracle()
+        changes = oracle.get_pending_changes(jurisdiction)
+
+        return {
+            "count": len(changes),
+            "changes": [
+                {
+                    "id": c.id,
+                    "created_at": c.created_at,
+                    "jurisdiction": c.jurisdiction,
+                    "status": c.status.value,
+                    "summary": c.proposal.get("summary", ""),
+                    "field_path": c.proposal.get("field_path", ""),
+                    "old_value": c.proposal.get("old_value"),
+                    "new_value": c.proposal.get("new_value"),
+                    "confidence": c.proposal.get("confidence", 0),
+                    "reasoning": c.proposal.get("reasoning", ""),
+                    "source_title": c.source_update.get("title") if c.source_update else None,
+                    "requires_immediate_action": c.proposal.get("requires_immediate_action", False)
+                }
+                for c in changes
+            ]
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get pending changes: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/oracle/pending/{change_id}")
+async def get_pending_change_detail(change_id: str):
+    """Get detailed information about a specific pending change."""
+    if not ORACLE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Regulatory Oracle not available")
+
+    oracle = get_oracle()
+    change = oracle.get_change_by_id(change_id)
+
+    if not change:
+        raise HTTPException(status_code=404, detail=f"Change {change_id} not found")
+
+    return {
+        "id": change.id,
+        "created_at": change.created_at,
+        "jurisdiction": change.jurisdiction,
+        "status": change.status.value,
+        "proposal": change.proposal,
+        "source_update": change.source_update,
+        "reviewed_by": change.reviewed_by,
+        "reviewed_at": change.reviewed_at,
+        "review_notes": change.review_notes,
+        "applied_at": change.applied_at
+    }
+
+
+@app.post("/oracle/pending/{change_id}/approve")
+async def approve_pending_change(change_id: str, request: ApproveChangeRequest):
+    """
+    Approve a pending change and optionally apply it immediately.
+
+    This is the human-in-the-loop step where a compliance officer
+    reviews and approves the AI-proposed rule change.
+    """
+    if not ORACLE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Regulatory Oracle not available")
+
+    oracle = get_oracle()
+    result = oracle.approve_change(
+        change_id=change_id,
+        reviewer=request.reviewer,
+        notes=request.notes,
+        apply_immediately=request.apply_immediately
+    )
+
+    if result.get("status") == "error":
+        raise HTTPException(status_code=400, detail=result.get("reason"))
+
+    logger.info(f"Change {change_id} approved by {request.reviewer}")
+    return result
+
+
+@app.post("/oracle/pending/{change_id}/reject")
+async def reject_pending_change(change_id: str, request: RejectChangeRequest):
+    """
+    Reject a pending change with a reason.
+
+    Rejected changes are preserved for audit purposes.
+    """
+    if not ORACLE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Regulatory Oracle not available")
+
+    oracle = get_oracle()
+    result = oracle.reject_change(
+        change_id=change_id,
+        reviewer=request.reviewer,
+        reason=request.reason
+    )
+
+    if result.get("status") == "error":
+        raise HTTPException(status_code=400, detail=result.get("reason"))
+
+    logger.info(f"Change {change_id} rejected by {request.reviewer}: {request.reason}")
+    return result
+
+
+@app.get("/oracle/history/{jurisdiction}")
+async def get_change_history(jurisdiction: str, limit: int = 20):
+    """Get history of applied changes for a jurisdiction."""
+    if not ORACLE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Regulatory Oracle not available")
+
+    oracle = get_oracle()
+    history = oracle.get_change_history(jurisdiction.upper(), limit)
+
+    return {
+        "jurisdiction": jurisdiction.upper(),
+        "count": len(history),
+        "changes": history
     }
 
 

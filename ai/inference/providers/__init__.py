@@ -14,6 +14,7 @@ from .together_client import (
     Conflict,
     Resolution,
     ConflictType,
+    RegulatoryChangeProposal,
     get_client,
     cleanup
 )
@@ -39,6 +40,7 @@ __all__ = [
     "Conflict",
     "Resolution",
     "ConflictType",
+    "RegulatoryChangeProposal",
     "get_client",
     "cleanup",
     # Legal-BERT

@@ -4,9 +4,15 @@ Daily Regulatory Update Scheduler
 
 Orchestrates daily checks of regulatory feeds and triggers appropriate actions:
 1. Fetch updates from SEC and MAS
-2. Update jurisdiction rules if needed
-3. Invalidate Redis cache for affected jurisdictions
-4. Trigger retrain if breaking changes detected
+2. **NEW: Analyze updates with Regulatory Oracle for granular rule changes**
+3. Update jurisdiction rules if needed
+4. Invalidate Redis cache for affected jurisdictions
+5. Trigger retrain if breaking changes detected
+
+The Oracle Integration:
+- Breaking changes are analyzed by AI for specific rule modifications
+- Proposals are queued for human review before applying
+- This enables real-time, granular rule updates vs. manual changelog bumps
 """
 
 import os
@@ -26,6 +32,20 @@ from .retrain_trigger import check_and_trigger, RetrainTrigger
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Import the Regulatory Oracle
+# Use sys.path manipulation for robust imports across different execution contexts
+import sys
+_ai_dir = Path(__file__).parent.parent.parent
+if str(_ai_dir) not in sys.path:
+    sys.path.insert(0, str(_ai_dir))
+
+try:
+    from services.regulatory_oracle import get_oracle, RegulatoryOracle
+    ORACLE_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Regulatory Oracle not available: {e}")
+    ORACLE_AVAILABLE = False
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 RESULTS_DIR = PROJECT_ROOT / "data" / "regulatory_updates" / "daily_runs"
@@ -49,7 +69,12 @@ class DailyUpdateScheduler:
             "retrain_triggered": False,
             "cache_invalidated": [],
             "errors": [],
+            # NEW: Oracle tracking
+            "oracle_proposals": [],
+            "oracle_enabled": ORACLE_AVAILABLE,
         }
+        # Initialize Oracle if available
+        self.oracle = get_oracle() if ORACLE_AVAILABLE else None
 
     def run_sec_updates(self) -> Dict[str, Any]:
         """Run SEC EDGAR scraper."""
@@ -109,6 +134,97 @@ class DailyUpdateScheduler:
 
         return None
 
+    async def process_with_oracle(self) -> List[Dict[str, Any]]:
+        """
+        Process breaking changes through the Regulatory Oracle.
+
+        This is the NEW granular update system:
+        1. Collects breaking changes from scrapers
+        2. Sends each to the Oracle for AI analysis
+        3. Creates pending change proposals for human review
+
+        Returns:
+            List of Oracle proposals created
+        """
+        if not self.oracle:
+            logger.info("Oracle not available, skipping granular analysis")
+            return []
+
+        proposals = []
+
+        # Process SEC updates
+        sec_result = self.results["sources"].get("sec", {})
+        if sec_result.get("updates"):
+            sec_breaking = [
+                u for u in sec_result["updates"]
+                if u.get("is_breaking_change", False)
+            ]
+            logger.info(f"Processing {len(sec_breaking)} SEC breaking changes through Oracle...")
+
+            for update in sec_breaking:
+                try:
+                    # Prepare update text for Oracle
+                    update_text = f"""
+SEC Regulatory Update: {update.get('title', 'Unknown')}
+
+Summary: {update.get('summary', '')}
+
+Category: {update.get('category', 'rules')}
+Published: {update.get('published_date', 'Unknown')}
+URL: {update.get('url', '')}
+
+Keywords Matched: {', '.join(update.get('keywords_matched', []))}
+"""
+                    result = await self.oracle.process_update(
+                        update_text=update_text,
+                        jurisdiction="US",
+                        source_update=update
+                    )
+
+                    if result.get("status") == "proposal_created":
+                        proposals.append(result)
+                        logger.info(f"Oracle created proposal: {result.get('summary')}")
+
+                except Exception as e:
+                    logger.error(f"Oracle failed to process update: {e}")
+                    self.results["errors"].append(f"Oracle SEC: {str(e)}")
+
+        # Process MAS updates
+        mas_result = self.results["sources"].get("mas", {})
+        if mas_result.get("updates"):
+            mas_breaking = [
+                u for u in mas_result["updates"]
+                if u.get("is_breaking_change", False)
+            ]
+            logger.info(f"Processing {len(mas_breaking)} MAS breaking changes through Oracle...")
+
+            for update in mas_breaking:
+                try:
+                    update_text = f"""
+MAS Regulatory Update: {update.get('title', 'Unknown')}
+
+Summary: {update.get('summary', '')}
+
+Category: {update.get('category', 'circular')}
+Published: {update.get('published_date', 'Unknown')}
+URL: {update.get('url', '')}
+"""
+                    result = await self.oracle.process_update(
+                        update_text=update_text,
+                        jurisdiction="SG",
+                        source_update=update
+                    )
+
+                    if result.get("status") == "proposal_created":
+                        proposals.append(result)
+                        logger.info(f"Oracle created proposal: {result.get('summary')}")
+
+                except Exception as e:
+                    logger.error(f"Oracle failed to process update: {e}")
+                    self.results["errors"].append(f"Oracle MAS: {str(e)}")
+
+        return proposals
+
     async def invalidate_cache(self, jurisdictions: List[str]) -> None:
         """Invalidate Redis cache for affected jurisdictions."""
         async with httpx.AsyncClient() as client:
@@ -157,6 +273,7 @@ class DailyUpdateScheduler:
         """Execute the full daily update process."""
         logger.info("=" * 60)
         logger.info("Starting daily regulatory update process")
+        logger.info(f"  Oracle enabled: {self.results['oracle_enabled']}")
         logger.info("=" * 60)
 
         # Run scrapers (sequentially to avoid rate limiting)
@@ -167,6 +284,17 @@ class DailyUpdateScheduler:
         retrain_event = self.check_retrain_triggers()
         if retrain_event:
             self.results["retrain_event"] = retrain_event
+
+        # NEW: Process breaking changes through Oracle for granular updates
+        if self.results["breaking_changes"] > 0 and self.oracle:
+            logger.info("Processing breaking changes through Regulatory Oracle...")
+            try:
+                proposals = await self.process_with_oracle()
+                self.results["oracle_proposals"] = proposals
+                logger.info(f"Oracle created {len(proposals)} change proposals")
+            except Exception as e:
+                logger.error(f"Oracle processing failed: {e}")
+                self.results["errors"].append(f"Oracle: {str(e)}")
 
         # Invalidate cache for affected jurisdictions
         affected = self.determine_affected_jurisdictions()
@@ -181,6 +309,7 @@ class DailyUpdateScheduler:
         logger.info("Daily update complete")
         logger.info(f"  Total updates: {self.results['total_updates']}")
         logger.info(f"  Breaking changes: {self.results['breaking_changes']}")
+        logger.info(f"  Oracle proposals: {len(self.results.get('oracle_proposals', []))}")
         logger.info(f"  Retrain triggered: {self.results['retrain_triggered']}")
         logger.info(f"  Cache invalidated: {self.results['cache_invalidated']}")
         logger.info(f"  Errors: {len(self.results['errors'])}")

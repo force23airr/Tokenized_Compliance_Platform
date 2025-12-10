@@ -66,6 +66,28 @@ class ConflictResult:
     ruleset_version: Optional[str] = None
 
 
+@dataclass
+class RegulatoryChangeProposal:
+    """
+    A specific, AI-proposed change to the ruleset.
+
+    This is the output of the Regulatory Oracle - a structured proposal
+    for modifying jurisdiction rules based on AI interpretation of
+    regulatory updates.
+    """
+    is_relevant: bool
+    confidence: float
+    summary_of_change: str
+    target_file: str  # e.g., "us_sec_rules.json"
+    field_path: str   # e.g., "accredited_investor_definition.categories.natural_person_income.thresholds.individual_income"
+    old_value: Any
+    new_value: Any
+    reasoning: str
+    source_text: Optional[str] = None
+    effective_date: Optional[str] = None
+    requires_immediate_action: bool = False
+
+
 class TogetherClient:
     """
     Async client for Together.ai inference API.
@@ -336,6 +358,180 @@ class TogetherClient:
             return ConflictType.DISCLOSURE_CONFLICT
         else:
             return ConflictType.JURISDICTION_CONFLICT  # Default
+
+    async def analyze_regulatory_impact(
+        self,
+        update_text: str,
+        current_rules_context: Dict[str, Any],
+        jurisdiction: str = "US"
+    ) -> RegulatoryChangeProposal:
+        """
+        The Oracle Function: Analyzes regulatory text and proposes specific JSON updates.
+
+        This is the core of the Regulatory Oracle system. It:
+        1. Reads the raw regulatory update text
+        2. Compares it against the current ruleset
+        3. Identifies specific numeric/boolean changes
+        4. Proposes a structured JSON patch
+
+        Args:
+            update_text: Raw text from regulatory update (SEC release, MAS circular, etc.)
+            current_rules_context: Current jurisdiction rules as a dictionary
+            jurisdiction: Target jurisdiction code (US, SG, EU, etc.)
+
+        Returns:
+            RegulatoryChangeProposal with specific field path and new value
+        """
+        # Flatten the current rules context for the prompt
+        rules_str = json.dumps(current_rules_context, indent=2)
+
+        # Determine target file based on jurisdiction
+        jurisdiction_files = {
+            "US": "us_sec_rules.json",
+            "SG": "sg_mas_guidelines.json",
+            "EU": "eu_mifid_ii.json",
+            "GB": "eu_mifid_ii.json",
+        }
+        target_file = jurisdiction_files.get(jurisdiction.upper(), f"{jurisdiction.lower()}_rules.json")
+
+        prompt = f"""TASK: You are a Senior Compliance Officer and Regulatory Expert. Analyze the following regulatory update text against our current JSON ruleset and determine if any specific values need to change.
+
+CURRENT RULESET (JSON):
+{rules_str}
+
+NEW REGULATORY TEXT:
+{update_text}
+
+INSTRUCTIONS:
+1. Carefully read the regulatory update and identify if it mandates a SPECIFIC change to any value in our ruleset.
+2. Look for changes to:
+   - Dollar thresholds (income limits, investment minimums, asset thresholds)
+   - Time periods (holding periods, lockup days, filing deadlines)
+   - Investor limits (max investors, caps)
+   - Boolean flags (general solicitation allowed, accreditation required)
+   - New exemption types or categories
+3. If a change is needed, identify the EXACT dot-notation path to the JSON field.
+4. Extract both the old value (from current rules) and the new value (from regulatory text).
+5. Note if this requires immediate action or has a future effective date.
+
+OUTPUT FORMAT (JSON ONLY - no markdown, no explanation outside JSON):
+{{
+    "is_relevant": true,
+    "confidence": 0.95,
+    "summary": "Brief description of the change",
+    "target_field_path": "path.to.field.in.json",
+    "old_value": <current value>,
+    "new_value": <new value from regulation>,
+    "reasoning": "Why this change is needed based on the regulatory text",
+    "effective_date": "2025-01-01 or null if immediate",
+    "requires_immediate_action": false
+}}
+
+If the regulatory text does NOT mandate a specific change to our ruleset values, respond with:
+{{
+    "is_relevant": false,
+    "confidence": 0.9,
+    "summary": "No actionable changes detected",
+    "target_field_path": "",
+    "old_value": null,
+    "new_value": null,
+    "reasoning": "Explain why no change is needed"
+}}
+
+IMPORTANT: Only propose changes for CONCRETE, SPECIFIC value modifications. Do not propose changes for:
+- General guidance or interpretations
+- Proposed rules (not yet final)
+- Changes that don't affect numeric thresholds or boolean flags in our ruleset"""
+
+        response_text = await self.complete(
+            prompt=prompt,
+            max_tokens=768,
+            temperature=0.0  # Zero temperature for maximum precision
+        )
+
+        try:
+            # Clean up potential markdown formatting from LLM
+            cleaned_text = response_text.strip()
+            if cleaned_text.startswith("```json"):
+                cleaned_text = cleaned_text[7:]
+            if cleaned_text.startswith("```"):
+                cleaned_text = cleaned_text[3:]
+            if cleaned_text.endswith("```"):
+                cleaned_text = cleaned_text[:-3]
+            cleaned_text = cleaned_text.strip()
+
+            data = json.loads(cleaned_text)
+
+            return RegulatoryChangeProposal(
+                is_relevant=data.get("is_relevant", False),
+                confidence=data.get("confidence", 0.0),
+                summary_of_change=data.get("summary", ""),
+                target_file=target_file,
+                field_path=data.get("target_field_path", ""),
+                old_value=data.get("old_value"),
+                new_value=data.get("new_value"),
+                reasoning=data.get("reasoning", ""),
+                source_text=update_text[:500] if update_text else None,
+                effective_date=data.get("effective_date"),
+                requires_immediate_action=data.get("requires_immediate_action", False)
+            )
+
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse regulatory impact response: {e}\nResponse: {response_text}")
+            return RegulatoryChangeProposal(
+                is_relevant=False,
+                confidence=0.0,
+                summary_of_change="Parse error",
+                target_file=target_file,
+                field_path="",
+                old_value=None,
+                new_value=None,
+                reasoning=f"Failed to parse AI response: {str(e)}",
+                source_text=update_text[:500] if update_text else None
+            )
+
+    async def analyze_multiple_updates(
+        self,
+        updates: List[Dict[str, Any]],
+        current_rules_context: Dict[str, Any],
+        jurisdiction: str = "US"
+    ) -> List[RegulatoryChangeProposal]:
+        """
+        Analyze multiple regulatory updates and return all proposals.
+
+        Args:
+            updates: List of update dicts with 'title', 'summary', 'raw_content' keys
+            current_rules_context: Current jurisdiction rules
+            jurisdiction: Target jurisdiction
+
+        Returns:
+            List of RegulatoryChangeProposal for all relevant updates
+        """
+        proposals = []
+
+        for update in updates:
+            # Combine title, summary, and raw content for analysis
+            update_text = f"""
+Title: {update.get('title', 'Unknown')}
+Summary: {update.get('summary', '')}
+
+Full Text:
+{update.get('raw_content', update.get('summary', ''))}
+"""
+            proposal = await self.analyze_regulatory_impact(
+                update_text=update_text,
+                current_rules_context=current_rules_context,
+                jurisdiction=jurisdiction
+            )
+
+            if proposal.is_relevant and proposal.confidence >= 0.7:
+                proposals.append(proposal)
+                logger.info(
+                    f"Oracle found actionable change: {proposal.summary_of_change} "
+                    f"(confidence: {proposal.confidence})"
+                )
+
+        return proposals
 
 
 # Singleton instance for module-level usage

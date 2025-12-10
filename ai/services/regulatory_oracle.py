@@ -38,6 +38,17 @@ from inference.providers.together_client import (
     RegulatoryChangeProposal
 )
 
+# Import Impact Simulator (lazy to avoid circular imports)
+_simulator = None
+
+def _get_simulator():
+    """Lazy-load the impact simulator."""
+    global _simulator
+    if _simulator is None:
+        from .impact_simulator import get_simulator
+        _simulator = get_simulator()
+    return _simulator
+
 logger = logging.getLogger(__name__)
 
 
@@ -63,6 +74,8 @@ class PendingChange:
     reviewed_at: Optional[str] = None
     review_notes: Optional[str] = None
     applied_at: Optional[str] = None
+    # God Mode: Impact Simulation Results
+    impact_simulation: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict:
         d = asdict(self)
@@ -266,6 +279,30 @@ class RegulatoryOracle:
 
         # 4. Create pending change
         change_id = self._generate_change_id(proposal)
+
+        # 5. GOD MODE: Run impact simulation BEFORE saving
+        impact_simulation = None
+        simulation_summary = None
+        try:
+            simulator = _get_simulator()
+            simulation_result = await simulator.simulate_change(proposal, use_mock_data=True)
+            impact_simulation = simulation_result.to_dict()
+            simulation_summary = {
+                "severity": simulation_result.severity.value,
+                "impacted_count": simulation_result.impacted_count,
+                "impact_percentage": simulation_result.impact_percentage,
+                "assets_at_risk_usd": simulation_result.total_assets_at_risk_usd,
+                "recommended_strategy": simulation_result.recommended_grandfathering.value,
+                "warnings_count": len(simulation_result.warnings)
+            }
+            logger.info(
+                f"Impact simulation complete: {simulation_result.impacted_count} casualties, "
+                f"severity={simulation_result.severity.value}"
+            )
+        except Exception as e:
+            logger.warning(f"Impact simulation failed (non-blocking): {e}")
+            impact_simulation = {"error": str(e), "status": "failed"}
+
         pending = PendingChange(
             id=change_id,
             created_at=datetime.now().isoformat(),
@@ -286,10 +323,11 @@ class RegulatoryOracle:
             source_update=source_update or {
                 "text": update_text[:1000],
                 "received_at": datetime.now().isoformat()
-            }
+            },
+            impact_simulation=impact_simulation
         )
 
-        # 5. Save pending change
+        # 6. Save pending change
         self._save_pending_change(pending)
 
         logger.info(
@@ -297,7 +335,7 @@ class RegulatoryOracle:
             f"(confidence: {proposal.confidence:.2f}, id: {change_id})"
         )
 
-        return {
+        result = {
             "status": "proposal_created",
             "change_id": change_id,
             "summary": proposal.summary_of_change,
@@ -307,6 +345,12 @@ class RegulatoryOracle:
             "confidence": proposal.confidence,
             "requires_immediate_action": proposal.requires_immediate_action
         }
+
+        # Include impact summary in response
+        if simulation_summary:
+            result["impact"] = simulation_summary
+
+        return result
 
     async def process_multiple_updates(
         self,
@@ -557,6 +601,61 @@ Full Text:
             return changelog[-limit:]
         except Exception:
             return []
+
+    async def run_impact_simulation(
+        self,
+        change_id: str,
+        use_live_data: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Run or re-run impact simulation for a pending change.
+
+        This is the "God Mode" feature that shows what investors
+        would be affected by a proposed rule change.
+
+        Args:
+            change_id: ID of the pending change
+            use_live_data: If True, query real investor data
+
+        Returns:
+            Simulation result dict
+        """
+        change = self.get_change_by_id(change_id)
+        if not change:
+            return {"status": "error", "reason": f"Change {change_id} not found"}
+
+        # Reconstruct the proposal
+        proposal_data = change.proposal
+        proposal = RegulatoryChangeProposal(
+            is_relevant=proposal_data.get("is_relevant", True),
+            confidence=proposal_data.get("confidence", 0.9),
+            summary_of_change=proposal_data.get("summary", ""),
+            target_file=proposal_data.get("target_file", ""),
+            field_path=proposal_data.get("field_path", ""),
+            old_value=proposal_data.get("old_value"),
+            new_value=proposal_data.get("new_value"),
+            reasoning=proposal_data.get("reasoning", ""),
+            effective_date=proposal_data.get("effective_date"),
+            requires_immediate_action=proposal_data.get("requires_immediate_action", False)
+        )
+
+        # Run simulation
+        simulator = _get_simulator()
+        result = await simulator.simulate_change(
+            proposal,
+            use_mock_data=not use_live_data
+        )
+
+        # Update the pending change with new simulation
+        change.impact_simulation = result.to_dict()
+        self._save_pending_change(change)
+
+        logger.info(
+            f"Simulation for {change_id}: {result.impacted_count} casualties, "
+            f"severity={result.severity.value}"
+        )
+
+        return result.to_dict()
 
 
 # Module-level convenience functions

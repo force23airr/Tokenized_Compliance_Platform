@@ -1077,6 +1077,144 @@ async def get_change_history(jurisdiction: str, limit: int = 20):
     }
 
 
+# ============== Impact Simulation - "God Mode" ==============
+
+class SimulationRequest(BaseModel):
+    """Request to run an impact simulation."""
+    use_live_data: bool = False
+
+
+@app.post("/oracle/pending/{change_id}/simulate")
+async def run_impact_simulation(change_id: str, request: Optional[SimulationRequest] = None):
+    """
+    Run or re-run impact simulation for a pending change.
+
+    This is the "God Mode" feature that shows exactly which investors
+    would be affected by a proposed rule change BEFORE you approve it.
+
+    Returns:
+        - Casualty count and list
+        - Total assets at risk
+        - Severity level
+        - Recommended grandfathering strategy
+        - Warnings for high-impact changes
+    """
+    if not ORACLE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Regulatory Oracle not available")
+
+    use_live = request.use_live_data if request else False
+
+    oracle = get_oracle()
+    result = await oracle.run_impact_simulation(change_id, use_live_data=use_live)
+
+    if result.get("status") == "error":
+        raise HTTPException(status_code=404, detail=result.get("reason"))
+
+    return {
+        "change_id": change_id,
+        "simulation": result,
+        "summary": {
+            "severity": result.get("severity", "unknown"),
+            "impacted_count": result.get("impacted_count", 0),
+            "impact_percentage": result.get("impact_percentage", 0),
+            "assets_at_risk_usd": result.get("total_assets_at_risk_usd", 0),
+            "recommended_strategy": result.get("recommended_grandfathering", "unknown"),
+            "warnings": result.get("warnings", [])
+        }
+    }
+
+
+@app.get("/oracle/pending/{change_id}/impact")
+async def get_impact_summary(change_id: str):
+    """
+    Get the impact simulation summary for a pending change.
+
+    This returns the cached simulation result without re-running.
+    Use POST /simulate to run a new simulation.
+    """
+    if not ORACLE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Regulatory Oracle not available")
+
+    oracle = get_oracle()
+    change = oracle.get_change_by_id(change_id)
+
+    if not change:
+        raise HTTPException(status_code=404, detail=f"Change {change_id} not found")
+
+    simulation = change.impact_simulation
+
+    if not simulation or simulation.get("error"):
+        return {
+            "change_id": change_id,
+            "has_simulation": False,
+            "message": "No simulation available. Use POST /simulate to run one.",
+            "error": simulation.get("error") if simulation else None
+        }
+
+    # Extract key metrics for summary
+    return {
+        "change_id": change_id,
+        "has_simulation": True,
+        "summary": {
+            "severity": simulation.get("severity", "unknown"),
+            "impacted_count": simulation.get("impacted_count", 0),
+            "total_investors_checked": simulation.get("total_investors_checked", 0),
+            "impact_percentage": simulation.get("impact_percentage", 0),
+            "assets_at_risk_usd": simulation.get("total_assets_at_risk_usd", 0),
+            "assets_at_risk_percentage": simulation.get("assets_at_risk_percentage", 0),
+            "recommended_strategy": simulation.get("recommended_grandfathering", "unknown"),
+            "grandfathering_rationale": simulation.get("grandfathering_rationale", ""),
+            "compliance_timeline_days": simulation.get("estimated_compliance_timeline_days", 0),
+            "warnings_count": len(simulation.get("warnings", []))
+        },
+        "warnings": simulation.get("warnings", []),
+        "impact_by_jurisdiction": simulation.get("impact_by_jurisdiction", {}),
+        "simulated_at": simulation.get("simulated_at")
+    }
+
+
+@app.get("/oracle/pending/{change_id}/casualties")
+async def get_casualties_list(change_id: str, limit: int = 50, offset: int = 0):
+    """
+    Get the detailed list of investors who would be affected by a pending change.
+
+    These are the "casualties" - investors who would become non-compliant
+    if the proposed rule change is approved.
+    """
+    if not ORACLE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Regulatory Oracle not available")
+
+    oracle = get_oracle()
+    change = oracle.get_change_by_id(change_id)
+
+    if not change:
+        raise HTTPException(status_code=404, detail=f"Change {change_id} not found")
+
+    simulation = change.impact_simulation
+
+    if not simulation or simulation.get("error"):
+        return {
+            "change_id": change_id,
+            "has_casualties": False,
+            "message": "No simulation available. Use POST /simulate to run one."
+        }
+
+    casualties = simulation.get("casualties", [])
+    total = len(casualties)
+
+    # Paginate
+    paginated = casualties[offset:offset + limit]
+
+    return {
+        "change_id": change_id,
+        "total_casualties": total,
+        "returned": len(paginated),
+        "offset": offset,
+        "limit": limit,
+        "casualties": paginated
+    }
+
+
 # ============== Startup/Shutdown ==============
 
 @app.on_event("startup")
